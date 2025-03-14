@@ -1,0 +1,12 @@
+name: push-mujoco
+channels:
+  - conda-forge
+  - defaults
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+      - mujoco
+      - gymnasium
