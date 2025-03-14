@@ -1,8 +1,8 @@
 import gymnasium as gym
-from pick_place_custom import PickPlaceCustomEnv
+from push_custom import PickPlaceCustomEnv
 
 
-xml_path = "franka_emika_panda/scene_pick_and_place.xml"
+xml_path = "franka_emika_panda/scene_push.xml"
 env = PickPlaceCustomEnv(xml_path, render_mode="human")
 obs, info = env.reset()
 
