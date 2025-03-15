@@ -1,4 +1,4 @@
-name: push-mujoco
+name: push_mujoco
 channels:
   - conda-forge
   - defaults
@@ -10,3 +10,4 @@ dependencies:
   - pip:
       - mujoco
       - gymnasium
+      - ikpy
