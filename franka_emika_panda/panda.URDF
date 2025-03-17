@@ -24,7 +24,7 @@ https://github.com/frankaemika/franka_ros/blob/develop/franka_description/robots
   </material>
 
   <!-- Base Link -->
-  <link name="base_link">
+  <link name="link0">
     <inertial>
       <mass value="0.629769"/>
       <origin xyz="-0.041018 -0.00014 0.049974"/>
@@ -53,7 +53,7 @@ https://github.com/frankaemika/franka_ros/blob/develop/franka_description/robots
     </visual>
   </link>
   <joint name="joint1" type="revolute">
-    <parent link="base_link"/>
+    <parent link="link0"/>
     <child link="link1"/>
     <origin rpy="0 0 0" xyz="0 0 0.333"/>
     <axis xyz="0 0 1"/>
