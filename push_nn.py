@@ -13,7 +13,7 @@ from torchvision import transforms
 
 
 class PushNN(nn.Module):
-    def __init__(self, action_size=7, qpos_repr_size=14):
+    def __init__(self, action_size=7, qpos_repr_size=64):
         super(PushNN, self).__init__()
         self.NUM_CHANNEL = 3 # RGB image
         self.IMAGE_HIDDEN_SIZE = 560 # TODO: make this into a parameter??
@@ -39,7 +39,7 @@ class PushNN(nn.Module):
                                               nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),               # [1, 16, 15, 20]
                                               nn.ReLU(),
                                               nn.MaxPool2d(2),                                                                              # [1, 16, 8, 20] -> half spatial dimensions
-                                              nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),               # [1, 8, 7, 10]
+                                              nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),                # [1, 8, 7, 10]
                                               nn.ReLU(),
                                               nn.Flatten() # [1, 560] -> flatten into a single vector of 8 x 7 x 10
                                               )
