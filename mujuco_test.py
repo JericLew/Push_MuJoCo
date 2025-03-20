@@ -1,5 +1,6 @@
 import gymnasium as gym
 from push_custom import PickPlaceCustomEnv
+from push_nn import PushNN
 import time
 
 xml_path = "franka_emika_panda/scene_push.xml"
@@ -9,6 +10,10 @@ obs, info = env.reset()
 for _ in range(10000000):
     action = env.action_space.sample()  # Random action
     obs, reward, done, truncated, info = env.step(action)
+
+    push_nn = PushNN()
+    push_nn.forward(obs)
+
     env.render()
     if reward > 1e-3 or reward < -1e-3:
         print(f"Obs: State: {obs['state'].shape}, Image: {obs['image'].shape}")
