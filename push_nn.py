@@ -5,11 +5,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
 
 # parameters for training
 # RNN_SIZE = 128      # size of the hidden state for the recurrent neural network (LSTM) 
-# GOAL_REPR_SIZE = 14 # size of the goal representation (number of features for goal representation) in the neural network 
+# GOAL_REPR_SIZE = 12 # size of the goal representation (number of features for goal representation) in the neural network 
 
 
 class PushNN(nn.Module):
@@ -45,7 +44,7 @@ class PushNN(nn.Module):
                                               )
         
         # for joint angles input
-        self.fully_connected_1 = nn.Sequential(nn.Linear(action_size, qpos_repr_size), # input size = [7], output size = [14]
+        self.fully_connected_1 = nn.Sequential(nn.Linear(action_size, qpos_repr_size), # input size = [7], output size = [64]
                                                nn.ReLU())
         
         # for skip connection after concat
@@ -72,21 +71,21 @@ class PushNN(nn.Module):
         image_tensor = torch.from_numpy(image).to(self.device).float()
         image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0)   # .permute() change shape from (H, W, C) → (C, H, W); 
                                                                     # unsqueeze.(0) add a batch dimension, final shape (1, C, H, W)
-        # TODO: do we need preprocessing? normalize??? (mean of 0 and a standard deviation of 1)
-        flat = self.sequential_block(image_tensor) # [1, 614400]
+        # TODO: do we need preprocessing? resize? normalize??? (mean of 0 and a standard deviation of 1)
+        flat = self.sequential_block(image_tensor) # [1, 560]
         # print("image_tensor: ", image_tensor.shape)
         # print("flat: ", flat.shape)
 
         qpos = obs['state'][:7] # state = np.concatenate([robot_joint_angles, end_effector_pos])
         qpos_tensor = torch.from_numpy(qpos).to(self.device).float().unsqueeze(0) # [1, 7]
-        qpos_layer = self.fully_connected_1(qpos_tensor) # [1, 14]
+        qpos_layer = self.fully_connected_1(qpos_tensor) # [1, 64]
         # print("qpos_tensor: ", qpos_tensor.shape)
         # print("qpos_layer: ", qpos_layer.shape)
 
-        hidden_input = torch.concat([flat, qpos_layer], 1) # [1, 574]
+        hidden_input = torch.concat([flat, qpos_layer], 1) # [1, 624]
         h1 = self.fully_connected_2(hidden_input)
         h2 = self.fully_connected_3(h1)
-        h3 = F.relu(h2 + hidden_input) # [1, 574] --> output (TODO: skipped LSTM for now)
+        h3 = F.relu(h2 + hidden_input) # [1, 624] --> output (TODO: skipped LSTM for now)
         # print("h3: ", h3.shape)
 
         # Policy head
