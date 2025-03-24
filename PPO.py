@@ -6,6 +6,7 @@
 
 import torch
 from torch.distributions import MultivariateNormal
+from torch.optim import Adam
 
 
 from network import FeedForwardNN # PPO Network
@@ -19,8 +20,12 @@ class PPOAgent():
         self.obs_dim = env.observation_space.shape[0] 
         self.act_dim = env.action_space.shape[0]
 
+        # Initialize Actor and Critic Networks
         self.actor = FeedForwardNN(self.obs_dim, self.act_dim)
         self.critic = FeedForwardNN(self.obs_dim, 1)
+
+        # Initialize Actor Optimizer 
+        self.actor_optim = Adam(self.actor.parameters(), lr = self.lr)
 
         self._init_hyperparameters()
 
@@ -28,12 +33,50 @@ class PPOAgent():
         self.timesteps_per_batch = 4800
         self.max_timesteps_per_episode = 1600
         self.gamma = 0.95 # Discount Factor
+        self.n_updates_per_iteration = 5
+        self.clip = 0.2 # PPO clip parameter (recommended by paper)
+        self.lr = 0.005 # Learning Rate
 
     def learn(self, total_timesteps):
         t_so_far = 0 # timesteps so far
 
         while t_so_far < total_timesteps: # ALG step 2
             batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()
+
+            # Calculate V from critic network (value function estimate) for each state in batch_obs
+            # V is needed to compute the advantage function; It estimates how good a state is 
+            V, _ = self.evaluate(batch_obs, batch_acts)
+
+            # ALG Step 5
+            # Calculate advantage
+            # If A_k is positive, action was better than expected; If A_k negative, action was worse than expected
+            A_k = batch_rtgs - V.detach()
+
+            # Normalize advantages
+            # Advantage values can have high variance, normalization helps stabilize training
+            A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+
+            # The loop where we update our network for some n epochs
+            for _ in range(self.n_updates_per_iteration):
+
+                V, curr_log_probs = self.evaluate(batch_obs, batch_acts)
+
+                ratios = torch.exp(curr_log_probs - batch_log_probs)
+
+                surr1 = ratios * A_k
+
+                # Torch clamp
+                surr2 = torch.clamp(ratios, 1-self.clip, 1 + self.clip) * A_k
+
+                actor_loss = (-torch.min(surr1, surr2)).mean()
+
+                self.actor_optim.zero_grad()
+                actor_loss.backward()
+                self.actor_optim.step()
+
+
+
+
 
     def rollout(self):
         """
@@ -153,6 +196,16 @@ class PPOAgent():
         # Returns sampled action and log probability of that action in our distribution
         return action.detach().numpy(), log_prob.detach()
 
+    def evaluate(self, batch_obs, batch_acts):
+        
+        V = self.critic(batch_obs).squeeze()
+
+        mean = self.actor(batch_obs)
+        dist = MultivariateNormal(mean, self.cov_mat)
+        log_probs = dist.log_prob(batch_acts)
+
+        # Return predicted values V and log probs log_probs
+        return V, log_probs
 
         
 
