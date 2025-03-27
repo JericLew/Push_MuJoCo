@@ -13,7 +13,10 @@ conda activate push_mujoco
 - use IK for action space
 
 ## PPO
-- start
+- PPO base code with two NN (DONE)
+- Integrate Actor & Critic into Single NN (TODO)
+- Integrate with PushNN (TODO)
+- Integrate with Custom Env (TODO)
 
 ## Network
 - start
