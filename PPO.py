@@ -5,6 +5,7 @@
 # Outputs: Stores training progress graphs 
 
 import torch
+import numpy as np
 from torch.distributions import MultivariateNormal
 from torch.optim import Adam
 
@@ -14,9 +15,13 @@ from push_nn import PushNN
 
 class PPOAgent():
     def __init__(self, env):
-        self.env = env
+        # Initialize Hyperparameters
+        self._init_hyperparameters()
+
+        self.logger = {}
 
         # Extract Observation and Action Space from environment
+        self.env = env
         self.obs_dim = env.observation_space.shape[0] 
         self.act_dim = env.action_space.shape[0]
 
@@ -26,16 +31,19 @@ class PPOAgent():
 
         # Initialize Actor Optimizer 
         self.actor_optim = Adam(self.actor.parameters(), lr = self.lr)
+        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
 
-        self._init_hyperparameters()
+        self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
+        self.cov_mat = torch.diag(self.cov_var)
+
 
     def _init_hyperparameters(self):
-        self.timesteps_per_batch = 4800
-        self.max_timesteps_per_episode = 1600
-        self.gamma = 0.95 # Discount Factor
-        self.n_updates_per_iteration = 5
-        self.clip = 0.2 # PPO clip parameter (recommended by paper)
-        self.lr = 0.005 # Learning Rate
+        self.timesteps_per_batch = 4800         # timesteps per batch
+        self.max_timesteps_per_episode = 1600   # timesteps per episode
+        self.gamma = 0.95                       # Discount Factor
+        self.n_updates_per_iteration = 5        # number of epochs per iteration
+        self.clip = 0.2                         # PPO clip parameter (recommended by paper)
+        self.lr = 0.005                         # Learning Rate
 
     def learn(self, total_timesteps):
         t_so_far = 0 # timesteps so far
@@ -56,6 +64,8 @@ class PPOAgent():
             # Advantage values can have high variance, normalization helps stabilize training
             A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
 
+            t_so_far += np.sum(batch_lens)
+
             # The loop where we update our network for some n epochs
             for _ in range(self.n_updates_per_iteration):
 
@@ -63,16 +73,30 @@ class PPOAgent():
 
                 ratios = torch.exp(curr_log_probs - batch_log_probs)
 
+                # Unclipped Surrogate Loss
+                # Policy Probability Ratio * Advantage Estimate
                 surr1 = ratios * A_k
 
-                # Torch clamp
+                # Clipped Surrogate Loss
+                # Torch clamp: limits (or clamps) the values of a tensor within a specified range 
+                # torch.clamp(input, min, max)
                 surr2 = torch.clamp(ratios, 1-self.clip, 1 + self.clip) * A_k
 
+                # Loss Function
+                # Clipping by taking the min of the two surrogate losses 
                 actor_loss = (-torch.min(surr1, surr2)).mean()
 
+                critic_loss = torch.nn.MSELoss()(V, batch_rtgs)
+
+                # Calculate gradients and perform backward propagation for actor network
                 self.actor_optim.zero_grad()
-                actor_loss.backward()
+                actor_loss.backward(retain_graph = True)
                 self.actor_optim.step()
+
+                # Calculate gradients and perform backward propagation for critic network
+                self.critic_optim.zero_grad()
+                critic_loss.backward()
+                self.critic_optim.step()
 
 
 
@@ -105,7 +129,7 @@ class PPOAgent():
             # Store rewards per episode
             ep_rews = []
 
-            obs = self.env.reset()
+            obs, _ = self.env.reset()
             done = False
 
             for ep_t in range (self.max_timesteps_per_episode):
@@ -117,7 +141,9 @@ class PPOAgent():
                 batch_obs.append(obs)
 
                 action, log_prob = self.get_action(obs)
-                obs, rew, done, _ = self.env.step(action)
+                obs, rew, terminated, truncated, _ = self.env.step(action)
+
+                done = terminated | truncated
 
                 # Collect reward, action, and log_prob
                 ep_rews.append(rew)
@@ -132,9 +158,9 @@ class PPOAgent():
             batch_rews.append(ep_rews)
 
 		# Reshape data as tensors in the shape specified in function description, before returning
-        batch_obs = torch.tensor(batch_obs, dtype=torch.float)
-        batch_acts = torch.tensor(batch_acts, dtype=torch.float)
-        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float)
+        batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float)
+        batch_acts = torch.tensor(np.array(batch_acts), dtype=torch.float)
+        batch_log_probs = torch.tensor(np.array(batch_log_probs), dtype=torch.float)
         batch_rtgs = self.compute_rtgs(batch_rews)         # ALG STEP 4
 
 		# Log the episodic returns and episodic lengths in this batch.
@@ -208,4 +234,9 @@ class PPOAgent():
         return V, log_probs
 
         
+
+import gymnasium as gym
+env = gym.make('Pendulum-v1')
+model = PPOAgent(env)
+model.learn(10000)
 
