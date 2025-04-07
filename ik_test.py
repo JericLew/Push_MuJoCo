@@ -18,8 +18,8 @@ for _ in range(10000000):
     mjdata = env.data
     site_name = 'end_effector'
     target_pos = np.array([0.8, 0.25, 0.2])
-    # joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
-    ikresults = ik.qpos_from_site_pose(mjmodel=mjmodel, mjdata=mjdata, site_name=site_name, target_pos=target_pos)
+    joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
+    ikresults = ik.qpos_from_site_pose(mjmodel=mjmodel, mjdata=mjdata, site_name=site_name, target_pos=target_pos, joint_names=joint_names)
     print(f"IK results: {ikresults}")
     action = ikresults[0][:7]
     obs, reward, done, truncated, info = env.step(action)

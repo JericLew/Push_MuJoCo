@@ -147,14 +147,17 @@ def qpos_from_site_pose(mjmodel,
   elif isinstance(joint_names, (list, np.ndarray, tuple)):
     if isinstance(joint_names, tuple):
       joint_names = list(joint_names)
-    # Find the indices of the DOFs belonging to each named joint. Note that
-    # these are not necessarily the same as the joint IDs, since a single joint
-    # may have >1 DOF (e.g. ball joints).\
-    indexer = mjmodel.dof_jntid.axes.row
+    joint_ids = [mujoco.mj_name2id(mjmodel, mujoco.mjtObj.mjOBJ_JOINT, name) for name in joint_names]
+    dof_indices = [i for i, jnt_id in enumerate(mjmodel.dof_jntid) if jnt_id in joint_ids]    
+    print(f"Joint names: {joint_names} | Joint IDs: {joint_ids} | DOF indices: {dof_indices}")
+    # # Find the indices of the DOFs belonging to each named joint. Note that
+    # # these are not necessarily the same as the joint IDs, since a single joint
+    # # may have >1 DOF (e.g. ball joints).\
+    # indexer = mjmodel.dof_jntid.axes.row
     
-    # `dof_jntid` is an `(nv,)` array indexed by joint name. We use its row
-    # indexer to map each joint name to the indices of its corresponding DOFs.
-    dof_indices = indexer.convert_key_item(joint_names)
+    # # `dof_jntid` is an `(nv,)` array indexed by joint name. We use its row
+    # # indexer to map each joint name to the indices of its corresponding DOFs.
+    # dof_indices = indexer.convert_key_item(joint_names)
   else:
     raise ValueError(_INVALID_JOINT_NAMES_TYPE.format(type(joint_names)))
 

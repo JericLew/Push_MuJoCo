@@ -26,8 +26,9 @@ class PPOAgent():
         self.act_dim = env.action_space.shape[0]
 
         # Initialize Actor and Critic Networks
-        self.actor = FeedForwardNN(self.obs_dim, self.act_dim)
-        self.critic = FeedForwardNN(self.obs_dim, 1)
+        self.network = PushNN(act_dim=self.act_dim, qpos_repr_size=64)
+        # self.actor = FeedForwardNN(self.obs_dim, self.act_dim)
+        # self.critic = FeedForwardNN(self.obs_dim, 1)
 
         # Initialize Actor Optimizer 
         self.actor_optim = Adam(self.actor.parameters(), lr = self.lr)
@@ -235,8 +236,16 @@ class PPOAgent():
 
         
 
-import gymnasium as gym
-env = gym.make('Pendulum-v1')
-model = PPOAgent(env)
-model.learn(10000)
+if __name__ == "__main__":
+    # Example usage of the PPOAgent class
+    # Initialize the environment and agent
+
+    import gymnasium as gym
+    from push_custom import PickPlaceCustomEnv
+
+    xml_path = "franka_emika_panda/scene_push.xml"
+    env = PickPlaceCustomEnv(xml_path, render_mode="camera")
+
+    rl_agent = PPOAgent(env)
+    rl_agent.learn(10000)
 
