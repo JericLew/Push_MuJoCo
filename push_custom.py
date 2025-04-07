@@ -115,7 +115,7 @@ class PickPlaceCustomEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        # self.data.ctrl[:] = action
+        self.data.ctrl[:] = action
         mujoco.mj_step(self.model, self.data, 5) # 5 substeps
 
         # Update object info
