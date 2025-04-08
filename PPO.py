@@ -20,7 +20,6 @@ Steps:
     12. Calculate Critic Loss
     13. Perform Backpropagation for Actor and Critic Networks
 14. Update Actor and Critic Networks
-
 '''
 
 import torch
@@ -49,28 +48,19 @@ class PPOAgent():
         self.network_optim = Adam(self.network.parameters(), lr=self.lr)
 
     def _init_hyperparameters(self):
-        self.timesteps_per_batch = 10000        # timesteps per batch
-        self.max_timesteps_per_episode = 1000   # timesteps per episode
-        self.gamma = 0.95                       # Discount Factor
+        self.n_steps = 20                     # number of steps in environment
+        self.n_envs = 2                         # number of parallel environments
         self.n_updates_per_iteration = 5        # number of epochs per iteration
+        self.gamma = 0.95                       # Discount Factor
         self.clip = 0.2                         # PPO clip parameter (recommended by paper)
         self.lr = 0.00001                         # Learning Rate
 
-    def learn(self, epochs):
-        for epoch in range(epochs):
-            print(f"Epoch: {epoch}")
+    def learn(self, iterations):
+        for itr in range(iterations):
+            print(f"Iteration: {itr}")
 
             # Collect Data, Summarize Rewards, Get Value from Critic Network, Get log probabilities of actions taken
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_vals = self.rollout()
-            print(f"Returns: {batch_rtgs}")
-
-            # Calculate advantage
-            # If A_k is positive, action was better than expected; If A_k negative, action was worse than expected
-            A_k = batch_rtgs - batch_vals
-
-            # Normalize advantages
-            # Advantage values can have high variance, normalization helps stabilize training
-            A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+            batch_obs, batch_acts, batch_log_probs, batch_vals, batch_returns, batch_advantages = self.rollout()
 
             # The loop where we update our network for some n epochs
             for _ in range(self.n_updates_per_iteration):
@@ -81,18 +71,18 @@ class PPOAgent():
 
                 # Unclipped Surrogate Loss
                 # Policy Probability Ratio * Advantage Estimate
-                surr1 = ratios * A_k
+                surr1 = ratios * batch_advantages
 
                 # Clipped Surrogate Loss
                 # Torch clamp: limits (or clamps) the values of a tensor within a specified range 
                 # torch.clamp(input, min, max)
-                surr2 = torch.clamp(ratios, 1-self.clip, 1 + self.clip) * A_k
+                surr2 = torch.clamp(ratios, 1-self.clip, 1 + self.clip) * batch_advantages
 
                 # Loss Function
                 # Clipping by taking the min of the two surrogate losses 
                 actor_loss = (-torch.min(surr1, surr2)).mean()
 
-                critic_loss = torch.nn.MSELoss()(V, batch_rtgs)
+                critic_loss = torch.nn.MSELoss()(V, batch_returns)
 
                 total_loss = actor_loss + 0.5 * critic_loss
 
@@ -103,21 +93,24 @@ class PPOAgent():
 
     def rollout(self):
         batch_obs = {} # (n_steps, n_envs, obs_dim) - stores observations at each step
-        batch_acts = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs, self.venv.action_space.shape[1])) # (n_steps, n_envs, act_dim) - stores actions taken at each step
-        batch_log_probs = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs)) # (n_steps, n_envs) - stores log probabilities of actions taken at each step
-        batch_rews = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs)) # (n_steps, n_envs) - stores rewards at each step
-        batch_rtgs = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs)) # (n_steps, n_envs) - stores rewards-to-go at each step
-        batch_vals = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs)) # (n_steps, n_envs) - stores value function estimates at each step
+        batch_acts = np.zeros((self.n_steps, self.venv.num_envs, self.venv.action_space.shape[1])) # (n_steps, n_envs, act_dim) - stores actions taken at each step
+        batch_log_probs = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores log probabilities of actions taken at each step
+        batch_vals = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores value function estimates at each step
+        batch_rews = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores rewards at each step
+        batch_terminated = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores termination flags at each step
+        batch_dones = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores done flags at each step
+        batch_returns = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores returns at each step
+        batch_advantages = np.zeros((self.n_steps, self.venv.num_envs)) # (n_steps, n_envs) - stores advantages at each step
         obs, _ = self.venv.reset() # reset environment and get initial observation
-        
-        for step in range(self.max_timesteps_per_episode):
+
+        for step in range(self.n_steps):
             ## Collect observation
             for key in obs.keys():
                 if key not in batch_obs: # Initialize batch_obs for each key if empty
                     if key == "state":
-                        batch_obs[key] = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs, obs[key].shape[1]))
+                        batch_obs[key] = np.zeros((self.n_steps, self.venv.num_envs, obs[key].shape[1]))
                     elif key == "image":
-                        batch_obs[key] = np.zeros((self.max_timesteps_per_episode, self.venv.num_envs, *obs[key].shape[1:]))
+                        batch_obs[key] = np.zeros((self.n_steps, self.venv.num_envs, *obs[key].shape[1:]))
                 batch_obs[key][step] = obs[key] # Store observation at each step
 
             ## Step the environment
@@ -125,45 +118,45 @@ class PPOAgent():
             obs, rew, terminated, truncated, _ = self.venv.step(action)
 
             # Store action, log probability of action taken, and reward at each step
-            done = terminated | truncated
             batch_acts[step] = action
             batch_log_probs[step] = log_prob # store log probability of action taken
-            batch_rews[step] = rew # store reward at each step
             batch_vals[step] = value
+            batch_rews[step] = rew # store reward at each step
+            batch_terminated[step] = terminated # store termination flag at each step
+            batch_dones[step] = terminated | truncated
 
-        batch_rtgs = self.compute_rtgs(batch_rews) # compute rewards-to-go
+        print("batch rews: ", batch_rews)
+        # Compute returns
+        batch_returns, batch_advantages = self.compute_gae(batch_rews, batch_vals, batch_dones) # compute returns
 
         # Convert to tensors
         for key in batch_obs.keys():
             batch_obs[key] = torch.tensor(batch_obs[key], dtype=torch.float).to(self.device).flatten(0, 1)
         batch_acts = torch.tensor(batch_acts, dtype=torch.float).to(self.device).flatten(0, 1)
         batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float).to(self.device).flatten(0, 1)
-        batch_rews = torch.tensor(batch_rews, dtype=torch.float).to(self.device).flatten(0, 1)
-        batch_rtgs = torch.tensor(batch_rtgs, dtype=torch.float).to(self.device).flatten(0, 1)
         batch_vals = torch.tensor(batch_vals, dtype=torch.float).to(self.device).flatten(0, 1)
-
-        return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_vals
-
-    def compute_rtgs(self, batch_rews):
-        batch_rtgs = np.zeros_like(batch_rews)
-        for env_idx in range(batch_rews.shape[1]):
-            discounted_reward = 0
-            for t in reversed(range(batch_rews.shape[0])):
-                discounted_reward = batch_rews[t, env_idx] + self.gamma * discounted_reward
-                batch_rtgs[t, env_idx] = discounted_reward
-        return batch_rtgs
+        batch_returns = torch.tensor(batch_returns, dtype=torch.float).to(self.device).flatten(0, 1)
+        batch_advantages = torch.tensor(batch_advantages, dtype=torch.float).to(self.device).flatten(0, 1)
+        
+        return batch_obs, batch_acts, batch_log_probs, batch_vals, batch_returns, batch_advantages
     
+    def compute_gae(self, batch_rews, batch_vals, batch_dones):
+        batch_advantages = np.zeros_like(batch_rews)
+        lastgaelam = 0
+        for t in reversed(range(batch_rews.shape[0])): # iterate over time steps
+            if t == batch_rews.shape[0] - 1:
+                nextnonterminal = 1.0 - batch_dones[-1]
+                nextvalues = batch_vals[-1]
+            else:
+                nextnonterminal = 1.0 - batch_dones[t + 1]
+                nextvalues = batch_vals[t + 1]
+            delta = batch_rews[t] + self.gamma * nextvalues * nextnonterminal - batch_vals[t]
+            batch_advantages[t] = lastgaelam = delta + self.gamma * nextnonterminal * lastgaelam
+        batch_returns = batch_advantages + batch_vals
+        batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-10) # normalize advantages
+        return batch_returns, batch_advantages
+
     def get_action(self, obs):
-        """
-			Queries an action from the actor network, should be called from rollout.
-
-			Parameters:
-				obs - the observation at the current timestep
-
-			Return:
-				action - the action to take, as a numpy array
-				log_prob - the log probability of the selected action in the distribution
-		"""
         obs = {key: torch.from_numpy(obs[key]).to("cuda").float() for key in obs.keys()}  # Convert to torch tensors
         (mean, std), value = self.network(obs)
         dist = Independent(Normal(mean, std), 1)  # 1 = number of reinterpreted batch dims
@@ -196,8 +189,8 @@ if __name__ == "__main__":
     venv = gym.make_vec("PickPlaceCustomEnv-v0",
                         xml_path=xml_path,
                         render_mode="camera",
-                        max_episode_steps=1000,
-                        num_envs=2,
+                        max_episode_steps=20,
+                        num_envs=1,
                         vectorization_mode="sync",
                         )
 
