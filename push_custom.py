@@ -111,6 +111,7 @@ class PickPlaceCustomEnv(gym.Env):
 
         self.success = False
         self.out_of_bounds = False
+        self.terminated = False
 
         return self._get_obs(), {}
 
@@ -128,6 +129,8 @@ class PickPlaceCustomEnv(gym.Env):
 
         obs = self._get_obs()
         done = self._get_done()
+        if done: # thereafter, the environment is always terminated
+            self.terminated = True
         reward = self._get_reward(done)
         info = {}
 
@@ -149,7 +152,7 @@ class PickPlaceCustomEnv(gym.Env):
         return obs
 
     def _get_done(self):
-        done = self.success or self.out_of_bounds
+        done = self.success or self.out_of_bounds or self.terminated
         return done
     
     def _get_reward(self, done):
