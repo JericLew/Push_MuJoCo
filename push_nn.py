@@ -73,15 +73,15 @@ class PushNN(nn.Module):
                                               )
         
         image_input_shape = (self.channel_dim, image_dim[0], image_dim[1])  #  (Channels, Height, Width)
-        self.image_encoder_output_shape = calculate_output_dim(self.sequential_block, image_input_shape)[0] # flattened
-        print("Image Encoder Output Shape: ", self.image_encoder_output_shape)
+        self.image_encoder_output_dim = calculate_output_dim(self.sequential_block, image_input_shape)[0] # flattened
+        print("Image Encoder Output Shape: ", self.image_encoder_output_dim)
         
         # for joint angles input
         self.fully_connected_1 = nn.Sequential(nn.Linear(state_dim, state_embedding_dim),
                                                nn.ReLU())
         
         # for skip connection after concat
-        self.combined_embedding_dim = self.image_encoder_output_shape + state_embedding_dim
+        self.combined_embedding_dim = self.image_encoder_output_dim + state_embedding_dim
         self.fully_connected_2 = nn.Sequential(nn.Linear(self.combined_embedding_dim, self.combined_embedding_dim), 
                                                nn.ReLU())
         self.fully_connected_3 = nn.Linear(self.combined_embedding_dim, self.combined_embedding_dim)
@@ -99,37 +99,28 @@ class PushNN(nn.Module):
 
     def forward(self, obs): 
         # obs = {"state": state, "image": image}
-        image = obs['image'] # shape: (480, 640, 3), dtype: uint8, type: <class 'numpy.ndarray'>
-        
-        image_tensor = torch.from_numpy(image).to(self.device).float()
-        image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0)   # .permute() change shape from (H, W, C) → (C, H, W); 
-                                                                    # unsqueeze.(0) add a batch dimension, final shape (1, C, H, W)
+        image_tensor = obs['image'] # shape: (B, 480, 640, 3), dtype: uint8, type: <class 'numpy.ndarray'> (B, H, W, C)
+        image_tensor = image_tensor.permute(0, 3, 1, 2) # change shape from (B, H, W, C) to (B, C, H, W)
         # TODO: do we need preprocessing? resize? normalize??? (mean of 0 and a standard deviation of 1)
+        # image_tensor = image_tensor.astype(np.float32) / 255.0 # normalize to [0, 1]
         flat = self.sequential_block(image_tensor) # [1, 560]
-        # print("image_tensor: ", image_tensor.shape)
-        # print("flat: ", flat.shape)
 
-        qpos = obs['state'] # state = np.concatenate([robot_joint_angles, end_effector_pos])
-        qpos_tensor = torch.from_numpy(qpos).to(self.device).float().unsqueeze(0) # [1, 10] joint angles + end effector position
-        qpos_layer = self.fully_connected_1(qpos_tensor) # [1, 64]
-        # print("qpos_tensor: ", qpos_tensor.shape)
-        # print("qpos_layer: ", qpos_layer.shape)
+        state_tensor = obs['state'] # shape: (B, 10), dtype: float32, type: <class 'numpy.ndarray'> (B, joint angles + end effector position)
+        qpos_layer = self.fully_connected_1(state_tensor) # [B, state_embedding_dim]
 
-        hidden_input = torch.concat([flat, qpos_layer], 1) # [1, 624]
+        hidden_input = torch.concat([flat, qpos_layer], 1) # [B, state_embedding_dim + image_encoder_output_dim]
         h1 = self.fully_connected_2(hidden_input)
         h2 = self.fully_connected_3(h1)
-        h3 = F.relu(h2 + hidden_input) # [1, 624] --> output (TODO: skipped LSTM for now)
-        # print("h3: ", h3.shape)
+        h3 = F.relu(h2 + hidden_input) # [B,  state_embedding_dim + image_encoder_output_dim]
+        
+        # TODO: skipped LSTM for now
 
         # Policy head
         mean = self.policy_mean(h3)
         log_std = self.policy_logstd(h3)
         std = torch.exp(log_std)  # Ensure positive standard deviation
-        # print("NN_mean: ", mean.shape, mean)
-        # print("NN_log_std: ", log_std.shape, log_std)
 
         # Value head
         value = self.value_layer(h3)
-        # print("NN_value: ", value.shape, value)   
 
         return (mean, std), value

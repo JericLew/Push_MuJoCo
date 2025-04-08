@@ -18,9 +18,7 @@ MuJoCo Notes
     option 3: do mj_step1(model, data) and mj_step2(model, data) manually
 
 TODO
-Add image obs
 change action space to x,y,z, open/close gripper
-Add random starts
 Change to render instead of viewer
 '''
 
@@ -29,6 +27,7 @@ class PickPlaceCustomEnv(gym.Env):
 
     def __init__(self, xml_path, render_mode="human"):
         super().__init__()
+        print("Initializing PickPlaceCustomEnv...")
 
         self.colors = ['red', 'green', 'blue']
         self.color_map = {
@@ -84,6 +83,7 @@ class PickPlaceCustomEnv(gym.Env):
         self.renderer = None
 
     def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
         # Reset MuJoCo model and data to home position
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self.model.keyframe('home').qpos
@@ -115,7 +115,7 @@ class PickPlaceCustomEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        self.data.ctrl[:] = action
+        self.data.ctrl[:] = action # + self.model.keyframe('home').ctrl # delta from home position
         mujoco.mj_step(self.model, self.data, 5) # 5 substeps
 
         # Update object info

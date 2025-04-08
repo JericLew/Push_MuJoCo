@@ -8,39 +8,46 @@ import torch
 import numpy as np
 from torch.distributions import MultivariateNormal
 from torch.optim import Adam
-
+from torch.distributions import Normal, Independent
 
 from network import FeedForwardNN # PPO Network
 from push_nn import PushNN
 
 class PPOAgent():
-    def __init__(self, env):
+    def __init__(self, env, network):
         # Initialize Hyperparameters
         self._init_hyperparameters()
 
         self.logger = {}
-
-        # Extract Observation and Action Space from environment
+        
+        # Initialize Environment
         self.env = env
-        self.obs_dim = env.observation_space.shape[0] 
-        self.act_dim = env.action_space.shape[0]
-
+        
         # Initialize Actor and Critic Networks
-        self.network = PushNN(act_dim=self.act_dim, qpos_repr_size=64)
+        self.network = network
+
+        self.network_optim = Adam(self.network.parameters(), lr=self.lr)
+
+        # # Extract Observation and Action Space from environment
+        # self.env = env
+        # self.obs_dim = env.observation_space.shape[0] 
+        # self.act_dim = env.action_space.shape[0]
+
+        # # Initialize Actor and Critic Networks
         # self.actor = FeedForwardNN(self.obs_dim, self.act_dim)
         # self.critic = FeedForwardNN(self.obs_dim, 1)
 
-        # Initialize Actor Optimizer 
-        self.actor_optim = Adam(self.actor.parameters(), lr = self.lr)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
+        # # Initialize Actor Optimizer 
+        # self.actor_optim = Adam(self.actor.parameters(), lr = self.lr)
+        # self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
 
-        self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
-        self.cov_mat = torch.diag(self.cov_var)
+        # self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
+        # self.cov_mat = torch.diag(self.cov_var)
 
 
     def _init_hyperparameters(self):
-        self.timesteps_per_batch = 4800         # timesteps per batch
-        self.max_timesteps_per_episode = 1600   # timesteps per episode
+        self.timesteps_per_batch = 10000        # timesteps per batch
+        self.max_timesteps_per_episode = 1000   # timesteps per episode
         self.gamma = 0.95                       # Discount Factor
         self.n_updates_per_iteration = 5        # number of epochs per iteration
         self.clip = 0.2                         # PPO clip parameter (recommended by paper)
@@ -50,7 +57,7 @@ class PPOAgent():
         t_so_far = 0 # timesteps so far
 
         while t_so_far < total_timesteps: # ALG step 2
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()
+            batch_states, batch_images, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()
 
             # Calculate V from critic network (value function estimate) for each state in batch_obs
             # V is needed to compute the advantage function; It estimates how good a state is 
@@ -126,6 +133,7 @@ class PPOAgent():
         t = 0 # keeps track of how many timesteps we have run so far for this batch
 
         while t < self.timesteps_per_batch:
+            print("Timesteps so far: ", t)
 
             # Store rewards per episode
             ep_rews = []
@@ -158,8 +166,12 @@ class PPOAgent():
             batch_lens.append(ep_t + 1) # +1 because timesteps start from 0
             batch_rews.append(ep_rews)
 
+        batch_states = [obs["state"] for obs in batch_obs]
+        batch_images = [obs["image"] for obs in batch_obs]
+
 		# Reshape data as tensors in the shape specified in function description, before returning
-        batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float)
+        batch_states = torch.tensor(np.array(batch_states), dtype=torch.float)
+        batch_images = torch.tensor(np.array(batch_images), dtype=torch.float)
         batch_acts = torch.tensor(np.array(batch_acts), dtype=torch.float)
         batch_log_probs = torch.tensor(np.array(batch_log_probs), dtype=torch.float)
         batch_rtgs = self.compute_rtgs(batch_rews)         # ALG STEP 4
@@ -168,7 +180,7 @@ class PPOAgent():
         self.logger['batch_rews'] = batch_rews
         self.logger['batch_lens'] = batch_lens
 
-        return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens
+        return batch_states, batch_images, batch_acts, batch_log_probs, batch_rtgs, batch_lens
     
     def compute_rtgs(self, batch_rews):
         """
@@ -207,21 +219,30 @@ class PPOAgent():
 				action - the action to take, as a numpy array
 				log_prob - the log probability of the selected action in the distribution
 		"""
-        # Query the actor network for a mean action (center of Gaussian distribution)
-        mean = self.actor(obs)
+        (mean, std), value = self.network(obs)
 
-        # Creates a Gaussian Distribution centered around mean
-        # self.cov_mat is a covariance matrix
-        dist = MultivariateNormal(mean, self.cov_mat)
+        # Create a multivariate distribution assuming diagonal covariance (independent Gaussians)
+        dist = Independent(Normal(mean, std), 1)  # 1 = number of reinterpreted batch dims
 
-        # Samples an action from the distribution 
-        action = dist.sample()
+        action = dist.sample()  # shape: (batch_size, 7)
+        log_prob = dist.log_prob(action)  # shape: (batch_size,)
+        return action.detach().cpu().numpy(), log_prob.detach()
 
-        # Computes the log probability of a selected action (for PPO policy updates)
-        log_prob = dist.log_prob(action)
+        # # Query the actor network for a mean action (center of Gaussian distribution)
+        # mean = self.actor(obs)
 
-        # Returns sampled action and log probability of that action in our distribution
-        return action.detach().numpy(), log_prob.detach()
+        # # Creates a Gaussian Distribution centered around mean
+        # # self.cov_mat is a covariance matrix
+        # dist = MultivariateNormal(mean, self.cov_mat)
+
+        # # Samples an action from the distribution 
+        # action = dist.sample()
+
+        # # Computes the log probability of a selected action (for PPO policy updates)
+        # log_prob = dist.log_prob(action)
+
+        # # Returns sampled action and log probability of that action in our distribution
+        # return action.detach().numpy(), log_prob.detach()
 
     def evaluate(self, batch_obs, batch_acts):
         
@@ -246,6 +267,14 @@ if __name__ == "__main__":
     xml_path = "franka_emika_panda/scene_push.xml"
     env = PickPlaceCustomEnv(xml_path, render_mode="camera")
 
-    rl_agent = PPOAgent(env)
+    state_dim = env.observation_space["state"].shape[0]
+    image_dim = env.observation_space["image"].shape
+    action_dim = env.action_space.shape[0]
+    print("State Space: ", state_dim)
+    print("Image Space: ", image_dim)
+    print("Action Space: ", action_dim)
+    network = PushNN(state_dim=state_dim, image_dim=image_dim, action_dim=action_dim)
+
+    rl_agent = PPOAgent(env, network)
     rl_agent.learn(10000)
 
