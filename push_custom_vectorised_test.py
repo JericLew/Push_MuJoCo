@@ -15,7 +15,7 @@ xml_path = "franka_emika_panda/scene_push.xml"
 venv = gym.make_vec("PickPlaceCustomEnv-v0",
                     xml_path=xml_path,
                     render_mode="camera",
-                    max_episode_steps=100,
+                    max_episode_steps=1000,
                     num_envs=2,
                     vectorization_mode="sync",
                     )
