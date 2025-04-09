@@ -83,7 +83,7 @@ class PickPlaceCustomEnv(gym.Env):
         self.renderer = None
 
     def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
+        # super().reset(seed=seed)
         # Reset MuJoCo model and data to home position
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self.model.keyframe('home').qpos
@@ -111,7 +111,6 @@ class PickPlaceCustomEnv(gym.Env):
 
         self.success = False
         self.out_of_bounds = False
-        self.terminated = False
 
         return self._get_obs(), {}
 
@@ -126,11 +125,10 @@ class PickPlaceCustomEnv(gym.Env):
         # Check success and out of bounds
         self.success = self._check_success()
         self.out_of_bounds = self._check_out_of_bounds()
+        self.too_far = self._check_too_far()
 
         obs = self._get_obs()
         done = self._get_done()
-        if done: # thereafter, the environment is always terminated
-            self.terminated = True
         reward = self._get_reward(done)
         info = {}
 
@@ -143,6 +141,7 @@ class PickPlaceCustomEnv(gym.Env):
         robot_joint_angles = self.data.qpos[:7]
         end_effector_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "end_effector")
         end_effector_pos = self.data.site_xpos[end_effector_id]
+        # end_effector_q
         state = np.concatenate([robot_joint_angles, end_effector_pos])
         image = self._get_camera_image()
         obs = {"state": state, "image": image}
@@ -152,17 +151,25 @@ class PickPlaceCustomEnv(gym.Env):
         return obs
 
     def _get_done(self):
-        done = self.success or self.out_of_bounds or self.terminated
+        done = self.success or self.out_of_bounds or self.too_far
         return done
     
     def _get_reward(self, done):
+        '''
+        Reward function:
+        - Distance reward: 2 * (prev_distance - current_distance) / initial_distance
+        - Success reward: +2 if success
+        - Out of bounds penalty: -2 if out of bounds
+
+        Total reward if success = 4
+        '''
         reward = 0
 
         # Compute ditance reward
         current_distace = np.linalg.norm(self.current_object_pos[:2] - self.target_pos[:2])
         prev_distance = np.linalg.norm(self.prev_object_pos[:2] - self.target_pos[:2])
         initial_distance = np.linalg.norm(self.initial_object_pos[:2] - self.target_pos[:2])
-        reward += (prev_distance - current_distace) / initial_distance
+        reward += 2 * (prev_distance - current_distace) / initial_distance # normalized distance reward and scale by x2
 
         if reward < 1e-7 and reward > -1e-7: # Too small reward
             reward = 0
@@ -170,7 +177,7 @@ class PickPlaceCustomEnv(gym.Env):
         if self.success:
             reward += 2
 
-        if self.out_of_bounds:
+        if self.out_of_bounds or self.too_far:
             reward -= 2
 
         return reward
@@ -185,6 +192,13 @@ class PickPlaceCustomEnv(gym.Env):
         x_check = x > self.max_object_x or x < self.min_object_x
         y_check = y > self.max_object_y or y < self.min_object_y
         return x_check or y_check
+    
+    def _check_too_far(self):
+        x, y, z = self.current_object_pos
+        end_effector_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "end_effector")
+        ee_x, ee_y, ee_z = self.data.site_xpos[end_effector_id]
+        distance = np.linalg.norm((x - ee_x, y - ee_y, z - ee_z))
+        return distance > 0.6
 
     def _get_camera_image(self, width=640, height=480):
         if self.renderer is None:

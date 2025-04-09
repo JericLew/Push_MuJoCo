@@ -118,6 +118,7 @@ class PushNN(nn.Module):
         # Policy head
         mean = self.policy_mean(h3)
         log_std = self.policy_logstd(h3)
+        log_std = torch.clamp(log_std, -20, 2)  # reasonable log std range
         std = torch.exp(log_std)  # Ensure positive standard deviation
 
         # Value head
