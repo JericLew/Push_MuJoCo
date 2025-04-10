@@ -43,7 +43,7 @@ for step in range(1000):
     obs, reward, terminated, truncated, info = env.step(action)
 
     env.render()
-    # if reward > 1e-3 or reward < -1e-3:
+    print(f"Joint Angles: {obs['state'][:7]}")
     print(f"EE Pose: {obs['state'][7:]}")
     print(f"Reward: {reward} | Terminated: {terminated} | Truncated: {truncated}")
     # if terminated or truncated:

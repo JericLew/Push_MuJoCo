@@ -14,8 +14,12 @@ conda activate push_mujoco
 - Side view camera (DONE)
 - render_mode = "human" only (DONE)
 - Image input to 0-1 (DONE) Not really normalised but is okay for now
+- Start positions to be easier (DONE)
+    - block always infront (DONE)
+    - start at correct level (DONE)
+- Add height penalty (DONE)
 - More Termination cases to speed up convergence
-    - Too far from object (DONE)
+    - Too far from object 0.25 in xy plane (DONE)
 - Delta actions? either from start qpos or current qpos
 - Privileged Actor
 

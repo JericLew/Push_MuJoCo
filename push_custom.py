@@ -61,6 +61,7 @@ class PickPlaceCustomEnv(gym.Env):
         print("Observation space:", self.observation_space)
 
         # Constants
+        self.end_effector_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "end_effector")
         self.object_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "object")
         self.object_qpos_addr = self.model.jnt_qposadr[self.model.body_jntadr[self.object_body_id]]
         self.max_object_x = self.model.body("table").pos[0] + self.model.geom("table_geom").size[0]
@@ -97,9 +98,11 @@ class PickPlaceCustomEnv(gym.Env):
         self.model.geom("object_geom").rgba = object_color
 
         # Randomly offset object position
-        object_xy_delta_pos = np.random.uniform(-0.15, 0.15, size=(2,))
+        # object_xy_delta_pos = np.random.uniform(-0.15, 0.15, size=(2,))
+        object_delta_x_pos = np.random.uniform(0, 0.15)
+        object_delta_y_pos = np.random.uniform(-0.15, 0.15)
         new_object_pos = self.model.body("object").pos.copy()
-        new_object_pos[:2] += object_xy_delta_pos
+        new_object_pos[:2] += (object_delta_x_pos, object_delta_y_pos)
         self.data.qpos[self.object_qpos_addr : self.object_qpos_addr + 3] = new_object_pos  
 
         mujoco.mj_forward(self.model, self.data)
@@ -137,13 +140,17 @@ class PickPlaceCustomEnv(gym.Env):
         # Update previous object position
         self.prev_object_pos = self.current_object_pos.copy()
 
+        # xmat = self.data.site_xmat[self.end_effector_id]  # shape: (9,)
+        # quat = np.zeros(4)
+        # mujoco.mju_mat2Quat(quat, xmat)
+        # print(f"EE Xmat: {xmat}")
+        # print(f"EE Quat: {quat}")
+
         return obs, reward, done, False, {}
     
     def _get_obs(self):
         robot_joint_angles = self.data.qpos[:7]
-        end_effector_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "end_effector")
-        end_effector_pos = self.data.site_xpos[end_effector_id]
-        # end_effector_q
+        end_effector_pos = self.data.site_xpos[self.end_effector_id]
         state = np.concatenate([robot_joint_angles, end_effector_pos])
         image = self._get_camera_image()
         obs = {"state": state, "image": image}
@@ -163,7 +170,7 @@ class PickPlaceCustomEnv(gym.Env):
         - Success reward: +2 if success
         - Out of bounds penalty: -2 if out of bounds
 
-        Total reward if success = 4
+        Total reward if success = 3
         '''
         reward = 0
 
@@ -177,10 +184,16 @@ class PickPlaceCustomEnv(gym.Env):
             reward = 0
 
         if self.success:
-            reward += 2
+            reward += 1
 
         if self.out_of_bounds or self.too_far:
-            reward -= 2
+            reward -= 1
+
+        # Height penalty
+        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
+
+        if ee_z > 0.30 or ee_z < 0.2:
+            reward -= 0.002
 
         return reward
     
@@ -197,10 +210,9 @@ class PickPlaceCustomEnv(gym.Env):
     
     def _check_too_far(self):
         x, y, z = self.current_object_pos
-        end_effector_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "end_effector")
-        ee_x, ee_y, ee_z = self.data.site_xpos[end_effector_id]
-        distance = np.linalg.norm((x - ee_x, y - ee_y, z - ee_z))
-        return distance > 0.6
+        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
+        distance = np.linalg.norm((x - ee_x, y - ee_y))
+        return distance > 0.25 # 0.3
 
     def _get_camera_image(self, width=256, height=256):
         if self.top_renderer is None:

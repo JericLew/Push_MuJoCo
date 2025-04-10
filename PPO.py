@@ -56,7 +56,7 @@ class PPOAgent():
                              n_updates_per_iteration=5,
                              gamma=0.95,
                              gae_lambda=0.95,
-                             entropy_coef=0.000001,
+                             entropy_coef=0.0001,
                              clip=0.2,
                              actor_lr=0.0005,
                              critic_lr=0.001):
@@ -105,9 +105,8 @@ class PPOAgent():
             rollout_advantages = (rollout_advantages - rollout_advantages.mean()) / (rollout_advantages.std() + 1e-10)
 
             ## Define batch size
-            batch_size = self.batch_size
             num_samples = rollout_actions.size(0) # (n_steps*n_envs)
-            num_batches = (num_samples + batch_size - 1) // batch_size  # Calculate number of batches
+            num_batches = (num_samples + self.batch_size - 1) // self.batch_size  # Calculate number of batches
             
             ## Loop to update the network
             average_actor_loss = 0
@@ -117,8 +116,8 @@ class PPOAgent():
             for _ in range(self.n_updates_per_iteration):
                 for batch_idx in range(num_batches):
                     # Slice the data for the current batch
-                    start_idx = batch_idx * batch_size
-                    end_idx = min(start_idx + batch_size, num_samples)
+                    start_idx = batch_idx * self.batch_size
+                    end_idx = min(start_idx + self.batch_size, num_samples)
 
                     batch_obs = {key: value[start_idx:end_idx].to(self.device) for key, value in rollout_obs.items()}
                     batch_obs["image"] = batch_obs["image"].permute(0, 1, 4, 2, 3)  # Change from (B, N, H, W, C) to (B, N, C, H, W)
@@ -157,10 +156,10 @@ class PPOAgent():
                     self.critic_optim.step()
             
             ## Logging Average losses
-            average_actor_loss /= num_batches
-            average_critic_loss /= num_batches
-            average_entropy /= num_batches
-            average_total_loss /= num_batches
+            average_actor_loss /= num_batches * self.n_updates_per_iteration
+            average_critic_loss /= num_batches * self.n_updates_per_iteration
+            average_entropy /= num_batches * self.n_updates_per_iteration
+            average_total_loss /= num_batches * self.n_updates_per_iteration
             print(f"Average Actor Loss: {average_actor_loss:.7}, Average Critic Loss: {average_critic_loss:.7f}, Average Entropy: {average_entropy:.7f}, Average Total Loss: {average_total_loss:.7f}")
 
             ## Save model every self.save_model_interval iterations
@@ -298,20 +297,20 @@ if __name__ == "__main__":
     import gymnasium as gym
 
     ## Hyperparameters
-    max_episode_steps = 20 #500 # 1000
-    n_envs = 2 #12
+    max_episode_steps = 500 #500 # 1000
+    n_envs = 1 #12
     vectorization_mode = "async"
     save_model_interval = 100
     save_image_interval = 20
-    batch_size=32
-    n_updates_per_iteration=5
-    gamma=0.95
-    gae_lambda=0.95
-    entropy_coef=0.000001
-    clip=0.2
-    actor_lr=0.0005
-    critic_lr=0.001
-    n_iterations = 200
+    batch_size = 64
+    n_updates_per_iteration = 5
+    gamma = 0.95
+    gae_lambda = 0.95
+    entropy_coef = 0.0001
+    clip = 0.2
+    actor_lr = 0.0001
+    critic_lr = 0.0005
+    n_iterations = 10000
 
     gym.register(
         id="PickPlaceCustomEnv-v0",
