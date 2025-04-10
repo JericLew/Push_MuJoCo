@@ -306,7 +306,7 @@ if __name__ == "__main__":
     n_updates_per_iteration = 5
     gamma = 0.95
     gae_lambda = 0.95
-    entropy_coef = 0.0001
+    entropy_coef = 0.001
     clip = 0.2
     actor_lr = 0.0001
     critic_lr = 0.0005

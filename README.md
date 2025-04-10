@@ -20,7 +20,8 @@ conda activate push_mujoco
 - Add height penalty (DONE)
 - More Termination cases to speed up convergence
     - Too far from object 0.25 in xy plane (DONE)
-- Delta actions? either from start qpos or current qpos
+    - Too far from object 0.3 in z height (DONE)
+- Delta actions (makes sense since intial actions close to 0) (DONE)
 - Privileged Actor
 
 ## PPO

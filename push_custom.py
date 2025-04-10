@@ -120,7 +120,7 @@ class PickPlaceCustomEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        self.data.ctrl[:] = action # + self.model.keyframe('home').ctrl # delta from home position
+        self.data.ctrl[:] = action + self.model.keyframe('home').ctrl # delta from home position
         mujoco.mj_step(self.model, self.data, 5) # 5 substeps
 
         # Update object info
@@ -212,7 +212,8 @@ class PickPlaceCustomEnv(gym.Env):
         x, y, z = self.current_object_pos
         ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
         distance = np.linalg.norm((x - ee_x, y - ee_y))
-        return distance > 0.25 # 0.3
+        # max xy dist is 0.25, max z dist is 0.3 (block height), min z dist is 0.2 (table height)
+        return distance > 0.25 or ee_z > 0.3 or ee_z < 0.2
 
     def _get_camera_image(self, width=256, height=256):
         if self.top_renderer is None:
