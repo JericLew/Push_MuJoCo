@@ -14,7 +14,7 @@ gym.register(
 xml_path = "franka_emika_panda/scene_push.xml"
 env = gym.make("PickPlaceCustomEnv-v0",
                xml_path=xml_path,
-               render_mode="camera",
+               render_mode="human",
                max_episode_steps=1000)
 obs, info = env.reset()
 print(f"Obs: State: {obs['state'].shape}, Image: {obs['image'].shape}")
@@ -25,6 +25,7 @@ for step in range(1000):
     print(f"Step: {step}")
     print(f"Obs: {obs['state'].shape}, {obs['image'].shape}")
     obs = {key: torch.from_numpy(obs[key]).to("cuda").float().unsqueeze(0) for key in obs.keys()}  # Convert to torch tensors
+    obs["image"] = obs["image"].permute(0, 1, 4, 2, 3)  # Change from (B, N, H, W, C) to (B, N, C, H, W)
     print(f"Obs: {obs['state'].shape}, {obs['image'].shape}")
     (mean, std), value = push_nn.forward(obs)
     dist = Independent(Normal(mean, std), 1)  # 1 = number of reinterpreted batch dims

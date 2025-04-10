@@ -21,8 +21,8 @@
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 
     <!-- Camera -->
-    <camera name="fixed_cam" pos="0.6 0 1.5" quat="1 0 0 0" fovy="45" resolution="640 480"/>
-
+    <camera name="top_cam" pos="0.6 0 1.5" quat="1 0 0 0" fovy="45" resolution="256 256"/>
+    <camera name="side_cam" pos="0.6 1.2 1.4" quat="0 0 0.3826834 0.9238795" fovy="45" resolution="256 256"/>    
     <!-- Table -->
     <body name="table" pos="0.6 0 0.1">
         <geom name="table_geom" type="box" size="0.5 0.5 0.1" pos="0 0 0" rgba="0.8 0.6 0.4 1"/>

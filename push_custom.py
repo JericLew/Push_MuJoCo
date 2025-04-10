@@ -23,7 +23,7 @@ Change to render instead of viewer
 '''
 
 class PickPlaceCustomEnv(gym.Env):
-    metadata = {"render_modes": ["human", "camera"]}
+    metadata = {"render_modes": ["human"]}
 
     def __init__(self, xml_path, render_mode="human"):
         super().__init__()
@@ -43,7 +43,7 @@ class PickPlaceCustomEnv(gym.Env):
         # Define action and observation space
         action_dim = self.model.nu # number of actuators/controls = dim(ctrl)
         state_dim = action_dim + 3 # number of joints + EE pos
-        image_dim = (480, 640, 3) # 480x640x3 image (HxWxC, 0-255 RGB)
+        image_dim = (2, 256, 256, 3) # 256x256x6 image (2xHxWxC, 0-1 RGB image)
 
         action_low = self.model.actuator_ctrlrange[:, 0].copy()
         action_high = self.model.actuator_ctrlrange[:, 1].copy()
@@ -51,7 +51,7 @@ class PickPlaceCustomEnv(gym.Env):
         state_high = np.concatenate([action_high, np.inf*np.ones(3)])
         self.action_space = spaces.Box(low=action_low, high=action_high, shape=(action_dim,), dtype=np.float32)
         self.state_space = spaces.Box(low=state_low, high=state_high, shape=(state_dim,), dtype=np.float32)
-        self.image_space = spaces.Box(low=0, high=255, shape=image_dim, dtype=np.uint8)
+        self.image_space = spaces.Box(low=0, high=1, shape=image_dim, dtype=np.float32)
         self.observation_space = spaces.Dict({
             "state": self.state_space,
             "image": self.image_space
@@ -81,6 +81,8 @@ class PickPlaceCustomEnv(gym.Env):
         self.render_mode = render_mode
         self.viewer = None
         self.renderer = None
+        self.top_renderer = None
+        self.side_renderer = None
 
     def reset(self, seed=None, options=None):
         # super().reset(seed=seed)
@@ -200,29 +202,45 @@ class PickPlaceCustomEnv(gym.Env):
         distance = np.linalg.norm((x - ee_x, y - ee_y, z - ee_z))
         return distance > 0.6
 
-    def _get_camera_image(self, width=640, height=480):
-        if self.renderer is None:
-            self.renderer = mujoco.Renderer(self.model, height, width)
-        self.renderer.update_scene(self.data, camera="fixed_cam")
-        image = self.renderer.render() # 640x480x3 image 0-255
-        return image
-    
+    def _get_camera_image(self, width=256, height=256):
+        if self.top_renderer is None:
+            self.top_renderer = mujoco.Renderer(self.model, height, width)
+        if self.side_renderer is None:
+            self.side_renderer = mujoco.Renderer(self.model, height, width)
+        self.top_renderer.update_scene(self.data, camera="top_cam")
+        top_image = self.top_renderer.render()
+        self.side_renderer.update_scene(self.data, camera="side_cam")
+        side_image = self.side_renderer.render()
+        stacked_image = np.stack([top_image, side_image], axis=0) # (2, H, W, C)
+        stacked_image = stacked_image.astype(np.float32) / 255.0 # Convert to float and normalize to [0, 1]
+        return stacked_image
+        
     def render(self):
         if self.render_mode == "human":
             if self.viewer is None:
                 self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
             self.viewer.sync()
-        elif self.render_mode == "camera":
-            if self.viewer is None:
-                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+        # elif self.render_mode == "camera":
+        #     pass
+        #     if self.viewer is None:
+        #         self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
 
-            cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "fixed_cam")
-            if cam_id != -1:
-                self.viewer.cam.fixedcamid = cam_id
-                self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
-            self.viewer.sync()
+        #     cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "fixed_cam")
+        #     if cam_id != -1:
+        #         self.viewer.cam.fixedcamid = cam_id
+        #         self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        #     self.viewer.sync()
 
     def close(self):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
+        if self.renderer:
+            self.renderer.close()
+            self.renderer = None
+        if self.top_renderer:
+            self.top_renderer.close()
+            self.top_renderer = None
+        if self.side_renderer:
+            self.side_renderer.close()
+            self.side_renderer = None
