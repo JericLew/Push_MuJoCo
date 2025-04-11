@@ -91,6 +91,7 @@ class PPOAgent():
             ## Save images every self.image_interval iterations (Only save env 0)
             if itr % self.save_image_interval == 0 and "image" in rollout_obs.keys():
                 self.save_images(rollout_obs["image"][:, 0], itr) # Save images from env 0
+                self.save_images(rollout_obs["image"][:, 1], itr+1) # Save images from env 1
                 
             ## Convert to tensors (but do not move everything to GPU at once) and n_steps x n_envs x dim -> n_steps*n_envs x dim
             for key in rollout_obs.keys():
@@ -103,6 +104,7 @@ class PPOAgent():
 
             ## Normalize advantages
             rollout_advantages = (rollout_advantages - rollout_advantages.mean()) / (rollout_advantages.std() + 1e-10)
+            # rollout_advantages = torch.clamp(rollout_advantages, -5, 5) # Clip advantages to avoid exploding gradients
 
             ## Define batch size
             num_samples = rollout_actions.size(0) # (n_steps*n_envs)
@@ -141,7 +143,7 @@ class PPOAgent():
                     # Loss Function
                     actor_loss = (-torch.min(surr1, surr2)).mean()
                     critic_loss = torch.nn.MSELoss()(batch_values_new, batch_returns)
-                    total_loss = actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy
+                    total_loss = actor_loss + 0.5 * critic_loss #- self.entropy_coef * entropy
 
                     average_actor_loss += actor_loss.item()
                     average_critic_loss += critic_loss.item()
@@ -297,19 +299,19 @@ if __name__ == "__main__":
     import gymnasium as gym
 
     ## Hyperparameters
-    max_episode_steps = 500 #500 # 1000
-    n_envs = 1 #12
+    max_episode_steps = 300 #500 # 1000
+    n_envs = 20 #12
     vectorization_mode = "async"
     save_model_interval = 100
     save_image_interval = 20
-    batch_size = 64
-    n_updates_per_iteration = 5
+    batch_size = 300
+    n_updates_per_iteration = 4
     gamma = 0.95
     gae_lambda = 0.95
-    entropy_coef = 0.001
+    entropy_coef = 0.000001
     clip = 0.2
-    actor_lr = 0.0001
-    critic_lr = 0.0005
+    actor_lr = 0.001
+    critic_lr = 0.001
     n_iterations = 10000
 
     gym.register(

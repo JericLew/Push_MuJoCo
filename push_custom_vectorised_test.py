@@ -57,8 +57,8 @@ for step in range(1000):
             img_pil = Image.fromarray((sub_img * 255).astype("uint8"))  # Convert to PIL Image
             img_pil.save(os.path.join(save_dir, f"env_{env_id}_img_{image_id}_step_{step}_.png"))
 
-    print(f"Joint Angles: {obs['state'][:7]}")
-    print(f"EE Pose: {obs['state'][7:]}")
+    print(f"Joint Angles: {obs['state'][:, :7]}")
+    print(f"EE Pose: {obs['state'][:, 7:]}")
     print(f"Reward: {reward} | Terminated: {terminated} | Truncated: {truncated}")
     # if terminated or truncated:
     #     obs, info = venv.reset()

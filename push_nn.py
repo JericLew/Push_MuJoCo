@@ -120,7 +120,8 @@ class PushNN(nn.Module):
         self.policy_mean = nn.Linear(self.combined_embedding_dim, self.action_dim)
 
         # Learnable global log_std
-        self.log_std = nn.Parameter(torch.zeros(self.action_dim))  # Learnable tensor, not from network
+        # self.log_std = nn.Parameter(torch.zeros(self.action_dim))  # Learnable tensor, not from network
+        self.log_std = nn.Parameter(torch.full((self.action_dim,), -1.5))  # Learnable tensor, initialized to -1
         # self.policy_logstd = nn.Linear(self.combined_embedding_dim, self.action_dim)
         
         # Value head

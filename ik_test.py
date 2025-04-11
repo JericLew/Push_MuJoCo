@@ -24,13 +24,13 @@ for step in range(100000):
     mjmodel = env.unwrapped.model
     mjdata = env.unwrapped.data
     site_name = 'end_effector'
-    target_pos = np.array([0.34, 0, 0.25]) # TARGET START
+    target_pos = np.array([0.29, 0, 0.25]) # TARGET START
     target_quat = np.array([0, 0.7071068, -0.7071068, 0]) # TARGET STRAGIHT UP
     target_pos = np.array([0.75, 0.20, 0.25]) # TO RED CORNER
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
     ikresults = ik.qpos_from_site_pose(mjmodel=mjmodel, mjdata=mjdata, site_name=site_name, target_pos=target_pos, target_quat=target_quat, joint_names=joint_names)
     print(f"IK results: {ikresults}")
-    action = ikresults[0][:7]
+    action = ikresults[0][:7] - mjmodel.keyframe("home").ctrl
 
     obs, reward, terminated, truncated, info = env.step(action)
 

@@ -28,6 +28,7 @@ class PickPlaceCustomEnv(gym.Env):
     def __init__(self, xml_path, render_mode="human"):
         super().__init__()
         print("Initializing PickPlaceCustomEnv...")
+        self.np_random = None
 
         self.colors = ['red', 'green', 'blue']
         self.color_map = {
@@ -86,21 +87,22 @@ class PickPlaceCustomEnv(gym.Env):
         self.side_renderer = None
 
     def reset(self, seed=None, options=None):
-        # super().reset(seed=seed)
+        super().reset(seed=seed)
+        self.np_random, _ = gym.utils.seeding.np_random(seed)
         # Reset MuJoCo model and data to home position
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self.model.keyframe('home').qpos
         self.data.ctrl[:] = self.model.keyframe('home').ctrl
 
         # Randomly select object color
-        object_color_name = np.random.choice(self.colors)
+        object_color_name = self.np_random.choice(self.colors)
         object_color = self.color_map[object_color_name]
         self.model.geom("object_geom").rgba = object_color
 
         # Randomly offset object position
-        # object_xy_delta_pos = np.random.uniform(-0.15, 0.15, size=(2,))
-        object_delta_x_pos = np.random.uniform(0, 0.15)
-        object_delta_y_pos = np.random.uniform(-0.15, 0.15)
+        # object_xy_delta_pos = self.np_random.uniform(-0.15, 0.15, size=(2,))
+        object_delta_x_pos = self.np_random.uniform(0, 0.15)
+        object_delta_y_pos = self.np_random.uniform(-0.15, 0.15)
         new_object_pos = self.model.body("object").pos.copy()
         new_object_pos[:2] += (object_delta_x_pos, object_delta_y_pos)
         self.data.qpos[self.object_qpos_addr : self.object_qpos_addr + 3] = new_object_pos  
@@ -121,7 +123,8 @@ class PickPlaceCustomEnv(gym.Env):
 
     def step(self, action):
         self.data.ctrl[:] = action + self.model.keyframe('home').ctrl # delta from home position
-        mujoco.mj_step(self.model, self.data, 5) # 5 substeps
+        # self.data.ctrl[:] += action # delta from current position
+        mujoco.mj_step(self.model, self.data, 10) # 5 substeps
 
         # Update object info
         self.current_object_pos = self.data.qpos[self.object_qpos_addr : self.object_qpos_addr + 3].copy() # x,y,z
@@ -130,11 +133,11 @@ class PickPlaceCustomEnv(gym.Env):
         # Check success and out of bounds
         self.success = self._check_success()
         self.out_of_bounds = self._check_out_of_bounds()
-        self.too_far = self._check_too_far()
+        # self.too_far = self._check_too_far()
 
         obs = self._get_obs()
         done = self._get_done()
-        reward = self._get_reward(done)
+        reward = self._get_reward()
         info = {}
 
         # Update previous object position
@@ -160,17 +163,23 @@ class PickPlaceCustomEnv(gym.Env):
         return obs
 
     def _get_done(self):
-        done = self.success or self.out_of_bounds or self.too_far
+        done = self.success or self.out_of_bounds
         return done
-    
-    def _get_reward(self, done):
+
+    def _get_reward(self):
         '''
         Reward function:
-        - Distance reward: 2 * (prev_distance - current_distance) / initial_distance
-        - Success reward: +2 if success
-        - Out of bounds penalty: -2 if out of bounds
+        1. Distance to target (2 * prev_distance - current_distance)
+        2. Success (1 if success, 0 otherwise) (TERMINAL)
+        3. Out of bounds (-1 if out of bounds, 0 otherwise) (TERMINAL)
+        4. Distance to end effector (penalty if too far) -0.005 * distance, max dist 0.4 (-0.002 * 500 = -1) 0.002 * 500
+        5. Height penalty (penalty if too high or too low) -0.02 * abs(ee_z - 0.25), max height 0.45 (-0.02 * (0.45 - 0.25) * 500 = -2) 0.004 * 500
+        6. Living penalty (-0.001)
 
-        Total reward if success = 3
+        if stay still and close to target, max reward = -0.001 * 500 = -0.5
+        anything below -0.5 is progress
+        max negative = -2 -1 -0.5 = -3.5
+        max positive = 1.2 + 1 = 2.2
         '''
         reward = 0
 
@@ -178,7 +187,8 @@ class PickPlaceCustomEnv(gym.Env):
         current_distace = np.linalg.norm(self.current_object_pos[:2] - self.target_pos[:2])
         prev_distance = np.linalg.norm(self.prev_object_pos[:2] - self.target_pos[:2])
         initial_distance = np.linalg.norm(self.initial_object_pos[:2] - self.target_pos[:2])
-        reward += 2 * (prev_distance - current_distace) / initial_distance # normalized distance reward and scale by x2
+        reward += 2 * (prev_distance - current_distace) # max 0.60 * 2 = 1.2
+        # reward += 2 * (prev_distance - current_distace) / initial_distance # normalized distance reward and scale by x2
 
         if reward < 1e-7 and reward > -1e-7: # Too small reward
             reward = 0
@@ -186,14 +196,38 @@ class PickPlaceCustomEnv(gym.Env):
         if self.success:
             reward += 1
 
-        if self.out_of_bounds or self.too_far:
+        if self.out_of_bounds:
             reward -= 1
 
-        # Height penalty
-        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
+        # if self.too_far:
+        #     reward -= 0.001
 
-        if ee_z > 0.30 or ee_z < 0.2:
-            reward -= 0.002
+        x, y, z = self.current_object_pos
+        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
+        distance = np.linalg.norm((x - ee_x, y - ee_y))
+
+        # distance penalty
+        if distance > 0.4:  # max is 500 * 0.005 * 0.4 = 1
+            reward -= 0.005 * 0.4
+        elif distance > 0.1: # 0.0707 corner + 0.01 radiues
+            reward -= 0.005 * distance
+
+        # height penalty 
+        # more strict cos i want to keep ee in object level
+        # but easy to learn beacause 0.25 is a fixed value
+        if ee_z > 0.45: # max is 500 * 0.02 * 0.2 = 2
+            reward -= 0.02 * (0.45 - 0.25)
+        elif ee_z > 0.28 or ee_z < 0.22:
+            reward -= 0.02 * abs(ee_z - 0.25)
+
+        # Living penalty
+        reward -= 0.001 # max is 500 * 0.001 = 0.5
+
+        # # Height penalty
+        # ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
+
+        # if ee_z > 0.30 or ee_z < 0.2:
+        #     reward -= 0.002
 
         return reward
     
@@ -213,7 +247,7 @@ class PickPlaceCustomEnv(gym.Env):
         ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
         distance = np.linalg.norm((x - ee_x, y - ee_y))
         # max xy dist is 0.25, max z dist is 0.3 (block height), min z dist is 0.2 (table height)
-        return distance > 0.25 or ee_z > 0.3 or ee_z < 0.2
+        return distance > 0.15 or ee_z > 0.3 or ee_z < 0.2
 
     def _get_camera_image(self, width=256, height=256):
         if self.top_renderer is None:
