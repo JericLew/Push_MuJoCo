@@ -45,11 +45,11 @@ class ImageEncoder(nn.Module):
         return self.projection(x)
 
 class StateEncoder(nn.Module):
-    def __init__(self, state_dim=10, embedding_dim=64, hidden_dim=128, dropout_p=0.1):
+    def __init__(self, state_dim=14, embedding_dim=64, hidden_dim=128, dropout_p=0.1):
         """
         StateEncoder: Neural network for the state space.
         Args:
-            state_dim (int): Input dimension (joint angles + end-effector position).
+            state_dim (int): Input dimension (joint angles + ee pos + ee quat).
             embedding_dim (int): Output embedding size.
             hidden_dim (int): Size of hidden layers.
             dropout_p (float): Dropout probability.
@@ -86,7 +86,7 @@ class PushNN(nn.Module):
         """
         PushNN: Neural network for the push task.
         Args:
-            state_dim (int): Dimension of the state space. (robot joint angles + end effector position)
+            state_dim (int): Dimension of the state space. (joint angles + ee pos + ee quat)
             image_dim (tuple): Dimension of the image input. (C, H, W)
             action_dim (int): Dimension of the action space. (number of actuators)
             state_embedding_dim (int): Dimension of the state embedding.
@@ -117,17 +117,33 @@ class PushNN(nn.Module):
         self.fully_connected_3 = nn.Linear(self.combined_embedding_dim, self.combined_embedding_dim)
 
         # Policy head
-        self.policy_mean = nn.Linear(self.combined_embedding_dim, self.action_dim)
+        self.policy_mean = nn.Sequential(
+            nn.Linear(self.combined_embedding_dim, self.combined_embedding_dim),
+            nn.Tanh(),
+            nn.Linear(self.combined_embedding_dim, action_dim),
+            nn.Tanh(),
+        )
+        # self.policy_mean = nn.Linear(self.combined_embedding_dim, self.action_dim)
 
         # Learnable global log_std
-        # self.log_std = nn.Parameter(torch.zeros(self.action_dim))  # Learnable tensor, not from network
-        self.log_std = nn.Parameter(torch.full((self.action_dim,), -1.5))  # Learnable tensor, initialized to -1
-        # self.policy_logstd = nn.Linear(self.combined_embedding_dim, self.action_dim)
+        self.policy_logstd = nn.Sequential(
+            nn.Linear(self.combined_embedding_dim, self.combined_embedding_dim),
+            nn.Tanh(),
+            nn.Linear(self.combined_embedding_dim, action_dim),
+        )
+        # self.log_std = nn.Parameter(torch.full((self.action_dim,), -1.0))  # Learnable tensor, initialized to -1
         
         # Value head
         self.value_layer = nn.Linear(self.combined_embedding_dim, 1)
 
         self.to(self.device)
+
+    def eval(self):
+        """
+        Set the model to evaluation mode.
+        """
+        super(PushNN, self).eval()
+        # self.log_std = nn.Parameter(torch.full((self.action_dim,), -3.0))  # Reset log_std to 0 for evaluation
         
 
     def forward(self, obs):
@@ -161,11 +177,11 @@ class PushNN(nn.Module):
         # TODO: skipped LSTM for now
 
         # Policy head
-        mean = self.policy_mean(h3)
-        std = torch.exp(self.log_std).expand_as(mean)  # Broadcasted per action
-        # log_std = self.policy_logstd(h3)
-        # log_std = torch.clamp(log_std, -20, 2)  # reasonable log std range
-        # std = torch.exp(log_std)  # Ensure positive standard deviation
+        mean = self.policy_mean(h3) # -1.0 to 1.0 (tanh)
+        # std = torch.exp(self.log_std).expand_as(mean)  # Broadcasted per action
+        log_std = self.policy_logstd(h3)
+        log_std = torch.clamp(log_std, -4, 1)  # reasonable log std range
+        std = torch.exp(log_std)  # Ensure positive standard deviation
 
         # Value head
         value = self.value_layer(h3)
