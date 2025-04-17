@@ -31,17 +31,17 @@
     <!-- Object to pick -->
     <body name="object" pos="0.35 0 0.25">
         <joint name="object_joint" type="free"/>
-        <geom name="object_geom" type="box" size="0.05 0.05 0.05" rgba="0 1 0 1"/>
+        <geom name="object_geom" type="box" size="0.05 0.05 0.05" rgba="0 1 0 1" mass="2.5"/>
     </body>
 
     <!-- Target Placement -->
-    <body name="r_target" pos="0.8 0.25 0.2">
+    <body name="r_target" pos="0.75 0.25 0.2">
         <geom name="r_target_geom" type="box" size="0.10 0.10 0.001" rgba="1 0 0 0.25" contype="0" conaffinity="0"/>
     </body>
     <body name="g_target" pos="0.8 0 0.2">
         <geom name="g_target_geom" type="box" size="0.10 0.10 0.001" rgba="0 1 0 0.25" contype="0" conaffinity="0"/>
     </body>
-    <body name="b_target" pos="0.8 -0.25 0.2">
+    <body name="b_target" pos="0.75 -0.25 0.2">
         <geom name="b_target_geom" type="box" size="0.10 0.10 0.001" rgba="0 0 1 0.25" contype="0" conaffinity="0"/>
     </body>
   </worldbody>
@@ -52,6 +52,7 @@
 
 </mujoco>
 <!--
+Joint speed limits in degrees/s A1: 150, A2: 150, A3: 150, A4: 150, A5: 180, A6: 180, A7: 180
 Manually Adjusted Desired Location
 Joint Angles: [
   -9.21931159e-11

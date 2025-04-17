@@ -149,7 +149,6 @@ def qpos_from_site_pose(mjmodel,
       joint_names = list(joint_names)
     joint_ids = [mujoco.mj_name2id(mjmodel, mujoco.mjtObj.mjOBJ_JOINT, name) for name in joint_names]
     dof_indices = [i for i, jnt_id in enumerate(mjmodel.dof_jntid) if jnt_id in joint_ids]    
-    print(f"Joint names: {joint_names} | Joint IDs: {joint_ids} | DOF indices: {dof_indices}")
     # # Find the indices of the DOFs belonging to each named joint. Note that
     # # these are not necessarily the same as the joint IDs, since a single joint
     # # may have >1 DOF (e.g. ball joints).\
@@ -224,8 +223,9 @@ def qpos_from_site_pose(mjmodel,
                     steps, err_norm, update_norm)
 
   if not success and steps == max_steps - 1:
-    logging.warning('Failed to converge after %i steps: err_norm=%3g',
-                    steps, err_norm)
+    # logging.warning('Failed to converge after %i steps: err_norm=%3g',
+    #                 steps, err_norm)
+    pass
 
   if not inplace:
     # Our temporary copy of mjdata is about to go out of scope, and when

@@ -1,0 +1,144 @@
+import numpy as np
+import gymnasium as gym
+
+from PPO import PPOAgent
+from model.common.cnn import ImageEncoder, DualImageEncoder
+from model.push_actor import PushNNActor, PushNNPrivilegedActor
+from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
+
+## Hyperparameters
+use_wandb = False
+name = "PPO-Push-delta_action-scaled_tanh"
+max_episode_steps = 300 #500 # 1000
+n_envs = 20 #12
+vectorization_mode = "async"
+save_model_interval = 50
+save_image_interval = 50
+batch_size = 300
+n_updates_per_iteration = 10
+gamma = 0.999
+gae_lambda = 0.95
+entropy_coef = 1e-3
+entropy_coef_decay = 0.98
+clip = 0.2
+actor_lr = 5e-5
+critic_lr = 1e-4
+n_iterations = 10000
+
+privileged = False
+random_object_pos = False
+
+if privileged: # NOTE: action is delta x, y pos
+    action_high = 0.05
+    action_low = -0.05
+else: # NOTE: action is delta joint angles
+    action_high = 3 / 180 * np.pi # 3 degrees in radians / 10*2(10^-3) seconds = 150 degrees/s
+    action_low = -3 / 180 * np.pi # 3 degrees in radians / 10*2(10^-3) seconds = 150 degrees/s
+
+gym.register(
+    id="PickPlaceCustomEnv-v0",
+    entry_point="push_custom:PickPlaceCustomEnv",
+    max_episode_steps=max_episode_steps,
+)
+
+xml_path = "franka_emika_panda/scene_push.xml"
+venv = gym.make_vec("PickPlaceCustomEnv-v0",
+                    xml_path=xml_path,
+                    privileged=privileged,
+                    random_object_pos=random_object_pos,
+                    render_mode=None,
+                    max_episode_steps=max_episode_steps,
+                    num_envs=n_envs,
+                    vectorization_mode=vectorization_mode,
+                    )
+
+state_dim = venv.observation_space["state"].shape[1]
+image_dim = venv.observation_space["image"].shape[2:] # (B, N, H, W, C) -> (H, W, C)
+image_dim = (image_dim[2], image_dim[0], image_dim[1]) # (H, W, C) -> (C, H, W)
+privileged_dim = venv.observation_space["privileged"].shape[1]
+action_dim = venv.action_space.shape[1]
+print("State Space: ", state_dim)
+print("Image Space: ", image_dim)
+print("Action Space: ", action_dim)
+
+if privileged:
+    actor = PushNNPrivilegedActor(
+        privileged_dim=privileged_dim,
+        action_dim=action_dim,
+        mlp_dims=[512, 512, 512, 512],
+        activation_type="Mish",
+        tanh_output=True,
+        residual_style=True,
+        use_layernorm=False,
+        dropout=0.0,
+        fixed_std=0.1,
+        learn_fixed_std=True,
+        std_min=0.01,
+        std_max=1,
+    )
+    critic = PushNNPrivilegedCritic(
+        privileged_dim=privileged_dim,
+        mlp_dims=[256, 256, 256],
+        activation_type="Mish",
+        use_layernorm=False,
+        residual_style=True,
+        dropout=0.0,
+    )
+else:
+    image_encoder_actor = DualImageEncoder(
+        image_input_shape=image_dim,
+        feature_dim=256,
+    )
+    image_encoder_critic = DualImageEncoder(
+        image_input_shape=image_dim,
+        feature_dim=256,
+    )
+    actor = PushNNActor(
+        backbone=image_encoder_actor,
+        state_dim=state_dim,
+        action_dim=action_dim,
+        mlp_dims=[512, 512, 512, 512],
+        activation_type="Mish",
+        tanh_output=True,
+        residual_style=True,
+        use_layernorm=False,
+        dropout=0.0,
+        fixed_std=0.1,
+        learn_fixed_std=True,
+        std_min=0.01,
+        std_max=1,
+        visual_feature_dim=128,
+    )
+    critic = PushNNCritic(
+        backbone=image_encoder_critic,
+        state_dim=state_dim,
+        mlp_dims=[256, 256, 256],
+        activation_type="Mish",
+        use_layernorm=False,
+        residual_style=True,
+        visual_feature_dim=128,
+        dropout=0.0,
+    )
+
+rl_agent = PPOAgent(venv, actor=actor, critic=critic)
+rl_agent.init_hyperparameters(use_wandb=use_wandb,
+                                name=name,
+                                save_model_interval=save_model_interval,
+                                save_image_interval=save_image_interval,
+                                n_steps=max_episode_steps,
+                                n_envs=n_envs,
+                                batch_size=batch_size,
+                                n_updates_per_iteration=n_updates_per_iteration,
+                                gamma=gamma,
+                                gae_lambda=gae_lambda,
+                                entropy_coef=entropy_coef,
+                                entropy_coef_decay=entropy_coef_decay,
+                                clip=clip,
+                                actor_lr=actor_lr,
+                                critic_lr=critic_lr,
+                                privileged=privileged,
+                                random_object_pos=random_object_pos,
+                                action_high=action_high,
+                                action_low=action_low,
+                                )
+rl_agent.learn(n_iterations)
