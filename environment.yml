@@ -12,4 +12,5 @@ dependencies:
       - gymnasium
       - torch
       - torchvision
+      - wandb
       # - ikpy

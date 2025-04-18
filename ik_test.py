@@ -2,7 +2,7 @@ import numpy as np
 import inverse_kinematics as ik
 
 import gymnasium as gym
-from push_nn import PushNN
+from archive.push_nn import PushNN
 
 
 gym.register(

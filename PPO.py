@@ -336,8 +336,7 @@ class PPOAgent():
         mean, std = self.actor(obs)  # Get mean and std from actor network
         value = self.critic(obs)  # Get value from critic network
         scaled_mean = 0.5 * (mean + 1) * self.action_range + self.action_low # NOTE assuming center of action space is 0 and action space is symmetric
-        scaled_std = 0.5 * std * self.action_range
-        dist = Independent(Normal(scaled_mean, scaled_std), 1)  # 1 = number of reinterpreted batch dims
+        dist = Independent(Normal(scaled_mean, std), 1)  # 1 = number of reinterpreted batch dims
         action = dist.sample()  # shape: (batch_size, 7)
         action = torch.clamp(action, self.action_low, self.action_high)  # Clip action to action space
         log_prob = dist.log_prob(action)  # shape: (batch_size,)
@@ -347,8 +346,7 @@ class PPOAgent():
         mean, std = self.actor(batch_obs)
         value = self.critic(batch_obs)
         scaled_mean = 0.5 * (mean + 1) * self.action_range + self.action_low # NOTE assuming center of action space is 0 and action space is symmetric
-        scaled_std = 0.5 * std * self.action_range
-        dist = Independent(Normal(scaled_mean, scaled_std), 1)  # 1 = number of reinterpreted batch dims
+        dist = Independent(Normal(scaled_mean, std), 1)  # 1 = number of reinterpreted batch dims
         log_prob = dist.log_prob(batch_actions)  # shape: (batch_size,)
         entropy = dist.entropy()
         return value.squeeze(1), log_prob, entropy

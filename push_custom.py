@@ -128,8 +128,6 @@ class PickPlaceCustomEnv(gym.Env):
             self.random_object_pos = options.get("random_object_pos", self.random_object_pos)
 
         ## Reset MuJoCo model and data to home position
-        self.model = mujoco.MjModel.from_xml_path(self.xml_path)
-        self.data = mujoco.MjData(self.model)
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self.model.keyframe('home').qpos
         self.data.ctrl[:] = self.model.keyframe('home').ctrl

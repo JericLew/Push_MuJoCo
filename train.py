@@ -6,9 +6,9 @@ from model.common.cnn import ImageEncoder, DualImageEncoder
 from model.push_actor import PushNNActor, PushNNPrivilegedActor
 from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 
-## Hyperparameters
-use_wandb = False
-name = "PPO-Push-delta_action-scaled_tanh"
+## PPO Hyperparameters
+use_wandb = True
+name = "privileged-delta_action-scaled_tanh"
 max_episode_steps = 300 #500 # 1000
 n_envs = 20 #12
 vectorization_mode = "async"
@@ -18,14 +18,15 @@ batch_size = 300
 n_updates_per_iteration = 10
 gamma = 0.999
 gae_lambda = 0.95
-entropy_coef = 1e-3
-entropy_coef_decay = 0.98
+entropy_coef = 1e-2
+entropy_coef_decay = 0.99
 clip = 0.2
-actor_lr = 5e-5
-critic_lr = 1e-4
+actor_lr = 1e-4
+critic_lr = 5e-4
 n_iterations = 10000
 
-privileged = False
+## Environment Hyperparameters
+privileged = True
 random_object_pos = False
 
 if privileged: # NOTE: action is delta x, y pos
@@ -61,6 +62,18 @@ print("State Space: ", state_dim)
 print("Image Space: ", image_dim)
 print("Action Space: ", action_dim)
 
+## Network Hyperparameters
+if privileged:
+    fixed_std = 0.03
+    learn_fixed_std = True # True
+    std_min = 0.005
+    std_max = 0.05
+else:
+    fixed_std = 0.03
+    learn_fixed_std = True # True
+    std_min = 0.005
+    std_max = 0.05
+
 if privileged:
     actor = PushNNPrivilegedActor(
         privileged_dim=privileged_dim,
@@ -71,10 +84,10 @@ if privileged:
         residual_style=True,
         use_layernorm=False,
         dropout=0.0,
-        fixed_std=0.1,
-        learn_fixed_std=True,
-        std_min=0.01,
-        std_max=1,
+        fixed_std=fixed_std,
+        learn_fixed_std=learn_fixed_std,
+        std_min=std_min,
+        std_max=std_max,
     )
     critic = PushNNPrivilegedCritic(
         privileged_dim=privileged_dim,
@@ -103,10 +116,10 @@ else:
         residual_style=True,
         use_layernorm=False,
         dropout=0.0,
-        fixed_std=0.1,
-        learn_fixed_std=True,
-        std_min=0.01,
-        std_max=1,
+        fixed_std=fixed_std,
+        learn_fixed_std=learn_fixed_std,
+        std_min=std_min,
+        std_max=std_max,
         visual_feature_dim=128,
     )
     critic = PushNNCritic(
