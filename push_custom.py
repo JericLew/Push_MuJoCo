@@ -86,9 +86,6 @@ class PickPlaceCustomEnv(gym.Env):
             "privileged": self.privileged_space
         })
 
-        print("Action space:", self.action_space)
-        print("Observation space:", self.observation_space)
-
         ## Constants
         self.end_effector_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "end_effector")
         self.attachment_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "attachment_site")
@@ -163,11 +160,16 @@ class PickPlaceCustomEnv(gym.Env):
         self.too_far = False
         self.wrong_target = False
 
-        return self._get_obs(), {}
+        ## Prep info
+        info = {
+            "ee_pos": self.data.site_xpos[self.end_effector_id].copy().astype(np.float32),
+        }
+
+        return self._get_obs(), info
 
     def step(self, action):
         # self.data.ctrl[:] = action # takes in absolute joint angles
-        # self.data.ctrl[:] += action # takes in relative joint angles
+        # self.data.ctrl[:] += action # takes in delta joint angles
         # self.data.ctrl[:] = action + self.model.keyframe('home').ctrl # takes in delta joint angles from home position
         if self.privileged: # if privileged, action is delta x, y
             ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id].copy() # x,y,z
@@ -197,23 +199,27 @@ class PickPlaceCustomEnv(gym.Env):
         obs = self._get_obs()
         done = self._get_done()
         reward = self._get_reward()
-        info = {}
+
+        ## Prep info
+        info = {
+            "ee_pos": self.data.site_xpos[self.end_effector_id].copy().astype(np.float32),
+        }
 
         ## Update previous object position
         self.prev_object_pos = self.current_object_pos.copy()
 
-        return obs, reward, done, False, {}
+        return obs, reward, done, False, info
     
     def _get_obs(self):
-        robot_joint_angles = self.data.qpos[:7].copy() # 7 joint angles
-        end_effector_pos = self.data.site_xpos[self.end_effector_id].copy() # 3 end effector position
-        state = np.concatenate([robot_joint_angles, end_effector_pos]) # (7 + 3 = 10)
+        robot_joint_angles = self.data.qpos[:7].copy().astype(np.float32) # 7 joint angles
+        end_effector_pos = self.data.site_xpos[self.end_effector_id].copy().astype(np.float32) # 3 end effector position
+        state = np.concatenate([robot_joint_angles, end_effector_pos]).astype(np.float32) # (7 + 3 = 10)
         image = self._get_camera_image()
 
         ## Privileged information
-        object_pos = self.data.qpos[7:10].copy() # object position
-        object_quat = self.data.qpos[10:14].copy() # object quaternion
-        privileged = np.concatenate([end_effector_pos, object_pos, self.target_pos, object_quat]) # (3 + 3 + 3 + 4 = 13)
+        object_pos = self.data.qpos[7:10].copy().astype(np.float32) # object position
+        object_quat = self.data.qpos[10:14].copy().astype(np.float32) # object quaternion
+        privileged = np.concatenate([end_effector_pos, object_pos, self.target_pos, object_quat]).astype(np.float32) # (3 + 3 + 3 + 4 = 13)
         # object_qvel = self.data.qvel[7:14] # object velocity
         
         obs = {"state": state, "image": image, "privileged": privileged}

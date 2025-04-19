@@ -1,13 +1,39 @@
 import torch
 import torch.nn as nn
+from torch.distributions import Normal, Independent
 
 from model.common.mlp import MLP, ResidualMLP
 
 
-class PushNNActor(nn.Module):
+class BaseActor(nn.Module):
+    def __init__(self, action_low=-1, action_high=1):
+        super(BaseActor, self).__init__()
+        self.action_low = torch.from_numpy(action_low)
+        self.action_high = torch.from_numpy(action_high)
+    
+    def forward(self, obs):
+        return
+    
+    def get_distribution(self, obs):
+        key = list(obs.keys())[0]
+        device = obs[key].device
+        mean, std = self(obs)
+        
+        scaled_mean = 0.5 * (mean + 1) * (self.action_high - self.action_low) + self.action_low
+        dist = Independent(Normal(scaled_mean, std), 1)
+        return dist
+    
+    def to(self, device):
+        super(BaseActor, self).to(device)
+        self.action_low = self.action_low.to(device)
+        self.action_high = self.action_high.to(device)
+    
+class PushNNActor(BaseActor):
     def __init__(
             self,
             backbone,
+            action_low=-1,
+            action_high=1,
             state_dim=10,
             action_dim=7,
             mlp_dims=[256, 256, 256, 256],
@@ -22,8 +48,7 @@ class PushNNActor(nn.Module):
             std_max=1.0,
             visual_feature_dim=128,
     ):
-        super(PushNNActor, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        super(PushNNActor, self).__init__(action_low=action_low, action_high=action_high)
 
         ## Vision Backbone
         self.backbone = backbone
@@ -118,9 +143,11 @@ class PushNNActor(nn.Module):
             out_scale = torch.exp(0.5 * out_logvar)
         return out_mean, out_scale
 
-class PushNNPrivilegedActor(nn.Module):
+class PushNNPrivilegedActor(BaseActor):
     def __init__(
             self,
+            action_low=-1,
+            action_high=1,
             privileged_dim=9,
             action_dim=2,
             mlp_dims=[256, 256, 256, 256],
@@ -134,8 +161,7 @@ class PushNNPrivilegedActor(nn.Module):
             std_min=0.01,
             std_max=1.0,
     ):
-        super(PushNNPrivilegedActor, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        super(PushNNPrivilegedActor, self).__init__(action_low=action_low, action_high=action_high)
 
         ## MLP
         self.privileged_dim = privileged_dim

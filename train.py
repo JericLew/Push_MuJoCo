@@ -7,9 +7,9 @@ from model.push_actor import PushNNActor, PushNNPrivilegedActor
 from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 
 ## PPO Hyperparameters
-use_wandb = True
-name = "privileged-delta_action-scaled_tanh"
-max_episode_steps = 300 #500 # 1000
+use_wandb = False
+name = "imitation_reward-delta_action-scaled_tanh"
+max_episode_steps = 300
 n_envs = 20 #12
 vectorization_mode = "async"
 save_model_interval = 50
@@ -18,6 +18,7 @@ batch_size = 300
 n_updates_per_iteration = 10
 gamma = 0.999
 gae_lambda = 0.95
+imitation_reward_coef = 0.005
 entropy_coef = 1e-2
 entropy_coef_decay = 0.99
 clip = 0.2
@@ -26,15 +27,8 @@ critic_lr = 5e-4
 n_iterations = 10000
 
 ## Environment Hyperparameters
-privileged = True
+privileged = False # Training with privileged information
 random_object_pos = False
-
-if privileged: # NOTE: action is delta x, y pos
-    action_high = 0.05
-    action_low = -0.05
-else: # NOTE: action is delta joint angles
-    action_high = 3 / 180 * np.pi # 3 degrees in radians / 10*2(10^-3) seconds = 150 degrees/s
-    action_low = -3 / 180 * np.pi # 3 degrees in radians / 10*2(10^-3) seconds = 150 degrees/s
 
 gym.register(
     id="PickPlaceCustomEnv-v0",
@@ -58,26 +52,35 @@ image_dim = venv.observation_space["image"].shape[2:] # (B, N, H, W, C) -> (H, W
 image_dim = (image_dim[2], image_dim[0], image_dim[1]) # (H, W, C) -> (C, H, W)
 privileged_dim = venv.observation_space["privileged"].shape[1]
 action_dim = venv.action_space.shape[1]
-print("State Space: ", state_dim)
-print("Image Space: ", image_dim)
-print("Action Space: ", action_dim)
+print(f"State Space: {venv.observation_space['state']}")
+print(f"Image Space: {venv.observation_space['image']}")
+print(f"Privileged Space: {venv.observation_space['privileged']}")
+print(f"Action Space: {venv.action_space}")
 
-## Network Hyperparameters
-if privileged:
+# NOTE: action is delta x, y pos (magnitude of 0.05 / 10*2(10^-3) seconds = 0.5 m/s)
+privileged_action_dim = 2 # delta x, delta y
+privileged_action_high = np.ones(privileged_action_dim) * 0.05
+privileged_action_low = np.ones(privileged_action_dim) * (-0.05)
+
+# NOTE: action is delta joint angles (magnitude of 3 degrees / 10*2(10^-3) seconds = 150 degrees/s)
+action_dim = 7 # 7 delta joint angles
+action_high = np.ones(action_dim) * (3 / 180 * np.pi)
+action_low = np.ones(action_dim) * (-3 / 180 * np.pi)
+# action_high = venv.action_space.high # NOTE: for absolute angles action
+# action_low = venv.action_space.low
+
+if privileged: 
+    ## Network Hyperparameters
     fixed_std = 0.03
-    learn_fixed_std = True # True
+    learn_fixed_std = True
     std_min = 0.005
     std_max = 0.05
-else:
-    fixed_std = 0.03
-    learn_fixed_std = True # True
-    std_min = 0.005
-    std_max = 0.05
-
-if privileged:
+    
     actor = PushNNPrivilegedActor(
+        action_low=privileged_action_low,
+        action_high=privileged_action_high,
         privileged_dim=privileged_dim,
-        action_dim=action_dim,
+        action_dim=privileged_action_dim,
         mlp_dims=[512, 512, 512, 512],
         activation_type="Mish",
         tanh_output=True,
@@ -97,7 +100,14 @@ if privileged:
         residual_style=True,
         dropout=0.0,
     )
+    privileged_actor = None # No imitation from privileged actor
 else:
+    ## Network Hyperparameters
+    fixed_std = 0.03
+    learn_fixed_std = True
+    std_min = 0.005
+    std_max = 0.05
+
     image_encoder_actor = DualImageEncoder(
         image_input_shape=image_dim,
         feature_dim=256,
@@ -108,6 +118,8 @@ else:
     )
     actor = PushNNActor(
         backbone=image_encoder_actor,
+        action_low=action_low,
+        action_high=action_high,
         state_dim=state_dim,
         action_dim=action_dim,
         mlp_dims=[512, 512, 512, 512],
@@ -132,8 +144,24 @@ else:
         visual_feature_dim=128,
         dropout=0.0,
     )
+    privileged_actor = PushNNPrivilegedActor(
+        action_low=privileged_action_low,
+        action_high=privileged_action_high,
+        privileged_dim=privileged_dim,
+        action_dim=privileged_action_dim,
+        mlp_dims=[512, 512, 512, 512],
+        activation_type="Mish",
+        tanh_output=True,
+        residual_style=True,
+        use_layernorm=False,
+        dropout=0.0,
+        fixed_std=fixed_std,
+        learn_fixed_std=learn_fixed_std,
+        std_min=std_min,
+        std_max=std_max,
+    )
 
-rl_agent = PPOAgent(venv, actor=actor, critic=critic)
+rl_agent = PPOAgent(venv, actor=actor, critic=critic, privileged_actor=privileged_actor)
 rl_agent.init_hyperparameters(use_wandb=use_wandb,
                                 name=name,
                                 save_model_interval=save_model_interval,
@@ -144,6 +172,7 @@ rl_agent.init_hyperparameters(use_wandb=use_wandb,
                                 n_updates_per_iteration=n_updates_per_iteration,
                                 gamma=gamma,
                                 gae_lambda=gae_lambda,
+                                imitation_reward_coef=imitation_reward_coef,
                                 entropy_coef=entropy_coef,
                                 entropy_coef_decay=entropy_coef_decay,
                                 clip=clip,
@@ -151,7 +180,5 @@ rl_agent.init_hyperparameters(use_wandb=use_wandb,
                                 critic_lr=critic_lr,
                                 privileged=privileged,
                                 random_object_pos=random_object_pos,
-                                action_high=action_high,
-                                action_low=action_low,
                                 )
 rl_agent.learn(n_iterations)

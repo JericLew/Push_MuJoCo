@@ -17,7 +17,6 @@ class PushNNCritic(nn.Module):
             visual_feature_dim=128,
     ):
         super(PushNNCritic, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         ## Vision Backbone
         self.backbone = backbone
@@ -67,7 +66,7 @@ class PushNNPrivilegedCritic(nn.Module):
             dropout=0.0,
     ):
         super(PushNNPrivilegedCritic, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         self.privileged_dim = privileged_dim
         input_dim = privileged_dim
         output_dim = 1

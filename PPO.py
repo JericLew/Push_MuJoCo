@@ -4,23 +4,7 @@
 # Inputs to PPO Clip Algorithm: Network, Gym Environment, Hyperparameters
 # Outputs: Stores training progress graphs 
 
-'''
-Steps:
-1. Collect Data
-2. Summarize Rewards
-3. Get Value from Critic Network
-4. Get log probabilities of actions taken
-5. Calculate Advantage
-6. loop for n epochs:
-    7. Get Value from Critic Network
-    8. Calculate Action Probability Ratio
-    9. Calculate Surrogate Loss
-    10. Calculate Clipped Surrogate Loss
-    11. Calculate Actor Loss
-    12. Calculate Critic Loss
-    13. Perform Backpropagation for Actor and Critic Networks
-14. Update Actor and Critic Networks
-'''
+
 import os
 import time
 import wandb
@@ -29,11 +13,10 @@ from PIL import Image
 import torch
 import numpy as np
 from torch.optim import Adam
-from torch.distributions import Normal, Independent
 
 
 class PPOAgent():
-    def __init__(self, venv, actor, critic, device=None):
+    def __init__(self, venv, actor, critic, privileged_actor=None, device=None):
         self.is_hyperparams_init = False
         
         ## Initialize Vectorized Environment
@@ -46,6 +29,12 @@ class PPOAgent():
         self.actor.to(self.device)
         self.critic.to(self.device)
 
+        ## Initialize Privileged Actor (if any) for imitation learning
+        self.privileged_actor = privileged_actor
+        if self.privileged_actor is not None:
+            self.privileged_actor.to(self.device)
+            self.privileged_actor.eval()
+
     def init_hyperparameters(self,
                              name="PPO-Push",
                              use_wandb=False,
@@ -57,6 +46,7 @@ class PPOAgent():
                              n_updates_per_iteration=5,
                              gamma=0.95,
                              gae_lambda=0.95,
+                             imitation_reward_coef=0.0,
                              entropy_coef=0.0001,
                              entropy_coef_decay=0.99,
                              clip=0.2,
@@ -64,8 +54,6 @@ class PPOAgent():
                              critic_lr=0.001,
                              privileged=False,
                              random_object_pos=False,
-                             action_high=(3/180*np.pi), # 3 degrees in radians / 10*2(10^-3) seconds = 150 degrees/s
-                             action_low=(-3/180*np.pi), # 3 degrees in radians / 10*2(10^-3) seconds = 150 degrees/s
                              ):
         self.save_model_interval = save_model_interval              # Save model every n iterations
         self.save_image_interval = save_image_interval              # Save images every n iterations
@@ -75,6 +63,7 @@ class PPOAgent():
         self.n_updates_per_iteration = n_updates_per_iteration      # number of epochs per iteration
         self.gamma = gamma                                          # Discount Factor
         self.gae_lambda = gae_lambda                                # GAE Lambda
+        self.imitation_reward_coef = imitation_reward_coef          # Imitation Reward Coefficient
         self.entropy_coef = entropy_coef                            # Entropy Coefficient
         self.entropy_coef_decay = entropy_coef_decay                # Entropy Coefficient Decay
         self.clip = clip                                            # PPO clip parameter (recommended by paper)
@@ -88,10 +77,6 @@ class PPOAgent():
         ## Initialize environment parameters
         self.privileged = privileged                                # Use privileged information
         self.random_object_pos = random_object_pos                  # Randomize object position
-        # Mean is in range [-1, 1] due to Tanh activation, scale to [action_low, action_high]
-        self.action_high = action_high
-        self.action_low = action_low
-        self.action_range = self.action_high - self.action_low
 
         self.is_hyperparams_init = True                             # Flag to check if hyperparameters are initialized
 
@@ -137,12 +122,12 @@ class PPOAgent():
                 
             ## Convert to tensors (but do not move everything to GPU at once) and n_steps x n_envs x dim -> n_steps*n_envs x dim
             for key in rollout_obs.keys():
-                rollout_obs[key] = torch.tensor(rollout_obs[key], dtype=torch.float).flatten(0, 1)
-            rollout_actions = torch.tensor(rollout_actions, dtype=torch.float).flatten(0, 1)
-            rollout_log_probs = torch.tensor(rollout_log_probs, dtype=torch.float).flatten(0, 1)
-            rollout_values = torch.tensor(rollout_values, dtype=torch.float).flatten(0, 1)
-            rollout_returns = torch.tensor(rollout_returns, dtype=torch.float).flatten(0, 1)
-            rollout_advantages = torch.tensor(rollout_advantages, dtype=torch.float).flatten(0, 1)
+                rollout_obs[key] = torch.tensor(rollout_obs[key], dtype=torch.float32).flatten(0, 1)
+            rollout_actions = torch.tensor(rollout_actions, dtype=torch.float32).flatten(0, 1)
+            rollout_log_probs = torch.tensor(rollout_log_probs, dtype=torch.float32).flatten(0, 1)
+            rollout_values = torch.tensor(rollout_values, dtype=torch.float32).flatten(0, 1)
+            rollout_returns = torch.tensor(rollout_returns, dtype=torch.float32).flatten(0, 1)
+            rollout_advantages = torch.tensor(rollout_advantages, dtype=torch.float32).flatten(0, 1)
 
             ## Define batch size
             num_samples = rollout_actions.size(0) # (n_steps*n_envs)
@@ -280,7 +265,7 @@ class PPOAgent():
 
         ## Reset environment
         options = {"privileged": self.privileged, "random_object_pos": self.random_object_pos}
-        obs, _ = self.venv.reset(options=options)
+        obs, info = self.venv.reset(options=options)
         rollout_firsts[0] = 1 # First step
 
         ## Data collection loop
@@ -296,9 +281,35 @@ class PPOAgent():
                         rollout_obs[key] = np.zeros((self.n_steps, self.n_envs, obs[key].shape[1])) # (shape[1] = privileged_dim)
                 rollout_obs[key][step] = obs[key]
 
-            ## Step the environment
+            ## Get action from actor network
             action, log_prob, value = self.get_action(obs) # get action from actor network
-            obs, rew, terminated, truncated, _ = self.venv.step(action)
+
+            ## Calculate imitation ee pos with privileged actor
+            if self.imitation_reward_coef > 0 and self.privileged_actor and not self.privileged:
+                array_prev_ee_pos = info["ee_pos"] # (n_envs, 3)
+                with torch.no_grad():
+                    privileged_obs = {"privileged": torch.tensor(obs["privileged"]).to(self.device)}
+                    dist = self.privileged_actor.get_distribution(privileged_obs) # Get distribution from privileged actor network
+                    imitation_delta_xy = dist.mean.cpu().numpy() # deterministic action
+                array_ee_x = array_prev_ee_pos[:, 0] + imitation_delta_xy[:, 0]
+                array_ee_y = array_prev_ee_pos[:, 1] + imitation_delta_xy[:, 1]
+                array_ee_z = np.ones_like(array_ee_x) * 0.25 # NOTE: hardcoded z position
+                imitation_ee_pos = np.stack((array_ee_x, array_ee_y, array_ee_z), axis=1) # (n_envs, 3)
+
+            ## Step the environment
+            obs, rew, terminated, truncated, info = self.venv.step(action)
+
+            ## Compute imitation reward from privileged actor
+            if self.imitation_reward_coef > 0 and self.privileged_actor and not self.privileged:
+                array_curr_ee_pos = info["ee_pos"] # (n_envs, 3)
+
+                # NOTE: imitating the privileged actor ee position only (TODO do for joint angles, hard cos of issue with aysnc env and torch and mjc data n model transfer)
+                imitation_reward = np.exp(-(np.linalg.norm(imitation_ee_pos - array_curr_ee_pos, axis=1) ** 2) / 0.0015) # NOTE: 0.0015 is a hyperparameter, can be tuned
+                rew += self.imitation_reward_coef * imitation_reward
+
+                if step % 50 == 0:
+                    print(f"Imitation EE Pos: {imitation_ee_pos[0]}, Current EE Pos: {array_curr_ee_pos[0]}")
+                    print(f"Imitation Reward: {imitation_reward}")
 
             ## Collect data
             rollout_actions[step] = action
@@ -331,22 +342,18 @@ class PPOAgent():
         return returns, advantages
 
     def get_action(self, obs):
-        obs = {key: torch.from_numpy(obs[key]).to("cuda").float() for key in obs.keys()}  # Convert to torch tensors
+        obs = {key: torch.from_numpy(obs[key].astype(np.float32)).to("cuda").float() for key in obs.keys()}  # Convert to torch tensors
         obs["image"] = obs["image"].permute(0, 1, 4, 2, 3)  # Change from (B, N, H, W, C) to (B, N, C, H, W)
-        mean, std = self.actor(obs)  # Get mean and std from actor network
+        dist = self.actor.get_distribution(obs)  # Get distribution from actor network
         value = self.critic(obs)  # Get value from critic network
-        scaled_mean = 0.5 * (mean + 1) * self.action_range + self.action_low # NOTE assuming center of action space is 0 and action space is symmetric
-        dist = Independent(Normal(scaled_mean, std), 1)  # 1 = number of reinterpreted batch dims
-        action = dist.sample()  # shape: (batch_size, 7)
-        action = torch.clamp(action, self.action_low, self.action_high)  # Clip action to action space
+        action = dist.sample()  # shape: (batch_size, action_dim)
+        action = torch.clamp(action, self.actor.action_low, self.actor.action_high)  # Clip action to action space
         log_prob = dist.log_prob(action)  # shape: (batch_size,)
         return action.detach().cpu().numpy(), log_prob.detach().cpu().numpy(), value.detach().cpu().squeeze(1).numpy()
     
     def evaluate(self, batch_obs, batch_actions):
-        mean, std = self.actor(batch_obs)
+        dist = self.actor.get_distribution(batch_obs)  # Get distribution from actor network
         value = self.critic(batch_obs)
-        scaled_mean = 0.5 * (mean + 1) * self.action_range + self.action_low # NOTE assuming center of action space is 0 and action space is symmetric
-        dist = Independent(Normal(scaled_mean, std), 1)  # 1 = number of reinterpreted batch dims
         log_prob = dist.log_prob(batch_actions)  # shape: (batch_size,)
         entropy = dist.entropy()
         return value.squeeze(1), log_prob, entropy
