@@ -16,7 +16,7 @@ from torch.optim import Adam
 
 
 class PPOAgent():
-    def __init__(self, venv, actor, critic, privileged_actor=None, device=None):
+    def __init__(self, venv, actor, critic, device=None):
         self.is_hyperparams_init = False
         
         ## Initialize Vectorized Environment
@@ -28,12 +28,6 @@ class PPOAgent():
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.actor.to(self.device)
         self.critic.to(self.device)
-
-        ## Initialize Privileged Actor (if any) for imitation learning
-        self.privileged_actor = privileged_actor
-        if self.privileged_actor is not None:
-            self.privileged_actor.to(self.device)
-            self.privileged_actor.eval()
 
     def init_hyperparameters(self,
                              name="PPO-Push",
@@ -265,51 +259,39 @@ class PPOAgent():
 
         ## Reset environment
         options = {"privileged": self.privileged, "random_object_pos": self.random_object_pos}
-        obs, info = self.venv.reset(options=options)
+        prev_obs, prev_info = self.venv.reset(options=options)
         rollout_firsts[0] = 1 # First step
 
         ## Data collection loop
         for step in range(self.n_steps):
             ## Collect observation
-            for key in obs.keys():
+            for key in prev_obs.keys():
                 if key not in rollout_obs: # Initialize batch_obs for each key if empty
-                    if key == "state":
-                        rollout_obs[key] = np.zeros((self.n_steps, self.n_envs, obs[key].shape[1])) # (shape[1] = state_dim)
-                    elif key == "image":
-                        rollout_obs[key] = np.zeros((self.n_steps, self.n_envs, *obs[key].shape[1:])) # (shape[1:] = image_dim) N x H x W x C
-                    elif key == "privileged":
-                        rollout_obs[key] = np.zeros((self.n_steps, self.n_envs, obs[key].shape[1])) # (shape[1] = privileged_dim)
-                rollout_obs[key][step] = obs[key]
-
-            ## Get action from actor network
-            action, log_prob, value = self.get_action(obs) # get action from actor network
-
-            ## Calculate imitation ee pos with privileged actor
-            if self.imitation_reward_coef > 0 and self.privileged_actor and not self.privileged:
-                array_prev_ee_pos = info["ee_pos"] # (n_envs, 3)
-                with torch.no_grad():
-                    privileged_obs = {"privileged": torch.tensor(obs["privileged"]).to(self.device)}
-                    dist = self.privileged_actor.get_distribution(privileged_obs) # Get distribution from privileged actor network
-                    imitation_delta_xy = dist.mean.cpu().numpy() # deterministic action
-                array_ee_x = array_prev_ee_pos[:, 0] + imitation_delta_xy[:, 0]
-                array_ee_y = array_prev_ee_pos[:, 1] + imitation_delta_xy[:, 1]
-                array_ee_z = np.ones_like(array_ee_x) * 0.25 # NOTE: hardcoded z position
-                imitation_ee_pos = np.stack((array_ee_x, array_ee_y, array_ee_z), axis=1) # (n_envs, 3)
+                    if key == "image": # handle image separately
+                        rollout_obs[key] = np.zeros((self.n_steps, self.n_envs, *prev_obs[key].shape[1:])) # (shape[1:] = image_dim) N x H x W x C
+                    else:
+                        rollout_obs[key] = np.zeros((self.n_steps, self.n_envs, prev_obs[key].shape[1])) # (shape[1] = key_dim)
+                rollout_obs[key][step] = prev_obs[key]
 
             ## Step the environment
+            action, log_prob, value = self.get_action(prev_obs) # get action from actor network
             obs, rew, terminated, truncated, info = self.venv.step(action)
 
             ## Compute imitation reward from privileged actor
-            if self.imitation_reward_coef > 0 and self.privileged_actor and not self.privileged:
-                array_curr_ee_pos = info["ee_pos"] # (n_envs, 3)
+            if self.imitation_reward_coef > 0 and not self.privileged:
+                prev_imitation_action = prev_info["imitation_action"] # (n_envs, action_dim)
+                prev_imitation_ee = prev_info["imitation_ee"] # (n_envs, ee_dim)
+                curr_ee_pos = info["ee_pos"] # (n_envs, ee_dim)
 
-                # NOTE: imitating the privileged actor ee position only (TODO do for joint angles, hard cos of issue with aysnc env and torch and mjc data n model transfer)
-                imitation_reward = np.exp(-(np.linalg.norm(imitation_ee_pos - array_curr_ee_pos, axis=1) ** 2) / 0.0015) # NOTE: 0.0015 is a hyperparameter, can be tuned
-                rew += self.imitation_reward_coef * imitation_reward
+                # NOTE: / 0.xx is a hyperparameter, can be tuned, determines the sensitivity of the imitation reward (Gaussian Reward)
+                imitation_action_reward = np.exp(-(np.linalg.norm(prev_imitation_action - action, axis=1) ** 2) / 0.1)
+                imitation_ee_reward = np.exp(-(np.linalg.norm(prev_imitation_ee - curr_ee_pos, axis=1) ** 2) / 0.02)
+                rew += self.imitation_reward_coef * (imitation_action_reward + imitation_ee_reward)
 
-                if step % 50 == 0:
-                    print(f"Imitation EE Pos: {imitation_ee_pos[0]}, Current EE Pos: {array_curr_ee_pos[0]}")
-                    print(f"Imitation Reward: {imitation_reward}")
+                if step % 100 == 0:
+                    print(f"Imitation Delta Angles: {prev_imitation_action[0]}, Actual Delta Angles: {action[0]}")
+                    print(f"Imitation EE Pos: {prev_imitation_ee[0]}, Actual EE Pos: {curr_ee_pos[0]}")
+                    print(f"Imitation Reward: {imitation_action_reward}")
 
             ## Collect data
             rollout_actions[step] = action
@@ -318,9 +300,13 @@ class PPOAgent():
             rollout_rewards[step] = rew
             rollout_terminated[step] = terminated
             rollout_firsts[step + 1] = terminated | truncated # next step is first if terminated or truncated
+
+            ## Update previous observation
+            prev_obs = obs
+            prev_info = info
         
         ## Compute returns and advantages
-        _, _, last_value = self.get_action(obs) # Get value for last observation (S_{T+1})
+        _, _, last_value = self.get_action(prev_obs) # Get value for last observation (S_{T+1})
         rollout_returns, rollout_advantages = self.compute_gae(rollout_rewards, rollout_values, rollout_terminated, last_value)
         
         return rollout_obs, rollout_actions, rollout_log_probs, rollout_values, rollout_rewards, rollout_returns, rollout_advantages, rollout_firsts

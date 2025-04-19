@@ -5,6 +5,7 @@ from gymnasium import spaces
 import mujoco
 import mujoco.viewer
 
+import torch
 import inverse_kinematics as ik
 
 # 2ms timesetp
@@ -18,10 +19,6 @@ MuJoCo Notes
     option 1: set data.ctrl to desired control inputs then call mj_step(model, data)
     option 2: add callbacks to model and call mj_step(model, data)
     option 3: do mj_step1(model, data) and mj_step2(model, data) manually
-
-TODO
-change action space to x,y,z, open/close gripper
-Change to render instead of viewer
 '''
 
 class PickPlaceCustomEnv(gym.Env):
@@ -37,7 +34,7 @@ class PickPlaceCustomEnv(gym.Env):
     """
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, xml_path, privileged=False, random_object_pos=False, render_mode="human"):
+    def __init__(self, xml_path, expert_actor=None, privileged=False, random_object_pos=False, render_mode="human"):
         super().__init__()
         print("Initializing PickPlaceCustomEnv...")
         self.np_random = None
@@ -55,6 +52,7 @@ class PickPlaceCustomEnv(gym.Env):
         self.data = mujoco.MjData(self.model)
 
         ## Option Flags
+        self.expert_actor = expert_actor
         self.privileged = privileged
         self.random_object_pos = random_object_pos
 
@@ -66,8 +64,10 @@ class PickPlaceCustomEnv(gym.Env):
             self.action_space = spaces.Box(low=action_low, high=action_high, shape=(action_dim,), dtype=np.float32)
         else:
             action_dim = self.model.nu # number of actuators/controls = dim(ctrl)
-            action_low = self.model.actuator_ctrlrange[:, 0].copy()
-            action_high = self.model.actuator_ctrlrange[:, 1].copy()
+            action_low = np.ones(action_dim) * (-3 / 180 * np.pi) # NOTE for delta joint angles
+            action_high = np.ones(action_dim) * (3 / 180 * np.pi)
+            # action_low = self.model.actuator_ctrlrange[:, 0].copy() # NOTE for absolute joint angles
+            # action_high = self.model.actuator_ctrlrange[:, 1].copy()
             self.action_space = spaces.Box(low=action_low, high=action_high, shape=(action_dim,), dtype=np.float32)
 
         state_dim = self.model.nu + 3 # number of joints + EE pos
@@ -83,7 +83,7 @@ class PickPlaceCustomEnv(gym.Env):
         self.observation_space = spaces.Dict({
             "state": self.state_space,
             "image": self.image_space,
-            "privileged": self.privileged_space
+            "privileged": self.privileged_space,
         })
 
         ## Constants
@@ -107,6 +107,7 @@ class PickPlaceCustomEnv(gym.Env):
         self.success = False
         self.out_of_bounds = False
         self.too_far = False
+        self.wrong_target = False
 
         ## Rendering
         self.render_mode = render_mode
@@ -134,11 +135,11 @@ class PickPlaceCustomEnv(gym.Env):
         object_color = self.color_map[object_color_name]
         self.model.geom("object_geom").rgba = object_color
 
-        ## Randomly offset object position
+        ## Set object position
         if self.random_object_pos: # Random object position
             object_delta_x_pos = self.np_random.uniform(0, 0.15)
             object_delta_y_pos = self.np_random.uniform(-0.15, 0.15)
-        else: ## Fixed object position
+        else: # Fixed object position
             object_delta_x_pos = 0.05
             object_delta_y_pos = 0.0
         new_object_pos = self.model.body("object").pos.copy()
@@ -160,17 +161,26 @@ class PickPlaceCustomEnv(gym.Env):
         self.too_far = False
         self.wrong_target = False
 
-        ## Prep info
-        info = {
-            "ee_pos": self.data.site_xpos[self.end_effector_id].copy().astype(np.float32),
-        }
+        obs = self._get_obs()
 
-        return self._get_obs(), info
+        ## Prep imitation info
+        if self.expert_actor:
+            obs_tensor = {"privileged": torch.from_numpy(obs["privileged"].copy())}
+            imitation_action, imitation_ee = self._get_imitation_info(obs_tensor)
+
+        info = {
+            "imitation_action": imitation_action,
+            "imitation_ee": imitation_ee,
+            "ee_pos": self.data.site_xpos[self.end_effector_id].copy(),
+        }
+        return obs, info
 
     def step(self, action):
         # self.data.ctrl[:] = action # takes in absolute joint angles
         # self.data.ctrl[:] += action # takes in delta joint angles
         # self.data.ctrl[:] = action + self.model.keyframe('home').ctrl # takes in delta joint angles from home position
+
+        ## Handle action
         if self.privileged: # if privileged, action is delta x, y
             ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id].copy() # x,y,z
             ee_x += action[0]
@@ -181,16 +191,16 @@ class PickPlaceCustomEnv(gym.Env):
             joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
             ikresults = ik.qpos_from_site_pose(mjmodel=self.model, mjdata=self.data, site_name="end_effector", target_pos=target_pos, target_quat=target_quat, joint_names=joint_names)
             action = ikresults[0][:7]
-            self.data.ctrl[:] = action # absolute joint angles
-        else:
-            self.data.ctrl[:] += action # takes in relative joint angles 
+            self.data.ctrl[:] = action
+        else: # if non-privileged, action is delta joint angles
+            self.data.ctrl[:] += action
         mujoco.mj_step(self.model, self.data, 10) # 10 substeps 2ms each = 20ms = 50Hz
 
         ## Update object info
         self.current_object_pos = self.data.qpos[self.object_qpos_addr : self.object_qpos_addr + 3].copy() # x,y,z
         self.current_object_vel = self.data.qvel[self.object_qpos_addr : self.object_qpos_addr + 3].copy() # dx,dy,dz
 
-        ## Check success and out of bounds
+        ## Check termination conditions
         self.success = self._check_success()
         self.out_of_bounds = self._check_out_of_bounds()
         self.too_far = self._check_too_far()
@@ -200,9 +210,15 @@ class PickPlaceCustomEnv(gym.Env):
         done = self._get_done()
         reward = self._get_reward()
 
-        ## Prep info
+        ## Prep imitation info
+        if self.expert_actor:
+            obs_tensor = {"privileged": torch.from_numpy(obs["privileged"].copy())}
+            imitation_action, imitation_ee = self._get_imitation_info(obs_tensor)
+
         info = {
-            "ee_pos": self.data.site_xpos[self.end_effector_id].copy().astype(np.float32),
+            "imitation_action": imitation_action,
+            "imitation_ee": imitation_ee,
+            "ee_pos": self.data.site_xpos[self.end_effector_id].copy(),
         }
 
         ## Update previous object position
@@ -224,6 +240,22 @@ class PickPlaceCustomEnv(gym.Env):
         
         obs = {"state": state, "image": image, "privileged": privileged}
         return obs
+    
+    def _get_imitation_info(self, obs_tensor):
+        with torch.no_grad():
+            dist = self.expert_actor.get_distribution(obs_tensor)
+            action = dist.mean.cpu()# deterministic action
+            action = torch.clamp(action, self.expert_actor.action_low, self.expert_actor.action_high).numpy()
+        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id].copy() # x,y,z
+        ee_x += action[0]
+        ee_y += action[1]
+        ee_z = self.data.qpos[9] # object z position
+        target_pos = np.array([ee_x, ee_y, ee_z])
+        target_quat = np.array([0, 0.7071068, -0.7071068, 0]) # EE straight up
+        joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
+        ikresults = ik.qpos_from_site_pose(mjmodel=self.model, mjdata=self.data, site_name="end_effector", target_pos=target_pos, target_quat=target_quat, joint_names=joint_names)
+        action = ikresults[0][:7] - self.data.ctrl[:7] # delta joint angles
+        return action.astype(np.float32), target_pos.astype(np.float32)
 
     def _get_done(self):
         done = self.success or self.out_of_bounds or self.wrong_target # or self.too_far

@@ -22,7 +22,8 @@ conda activate push_mujoco
     - Too far from object 0.25 in xy plane (DONE)
     - Too far from object 0.3 in z height (DONE)
 - Delta actions (makes sense since intial actions close to 0) (DONE)
-- Privileged Actor
+- Privileged Actor (DONE)
+- Imitation info
 
 ## PPO
 - PPO base code with two NN (DONE)
@@ -30,12 +31,14 @@ conda activate push_mujoco
 - Integrate with PushNN (DONE)
 - Integrate with Custom Env (DONE)
 - Use vectorised environment (DONE, sync though)
-- ASYNC Vectorised environment (DONE some issue with OpenGL, run $MUJOCO_GL=egl first)
+- ASYNC Vectorised environment (DONE some issue with OpenGL, run export MUJOCO_GL=egl first)
 - Entropy Loss (DONE)
 - Simple Logging (DONE)
 - Saving Models (DONE)
 - Saving Images (DONE)
-- wandb logging
+- wandb logging (DONE)
+- added entropy decay
+- added imitation reward
 
 ## Network
 - Make a basic network (DONE)
