@@ -32,9 +32,9 @@ class PickPlaceCustomEnv(gym.Env):
     Privileged action spaec: delta x, delta y (NOTE z is fixed to object height)
     Non-privileged action space: delta joint angles
     """
-    metadata = {"render_modes": ["human"]}
+    metadata = {"render_modes": ["human"], "action_types": ["delta_xy", "delta_angle", "absolute_angle"]}
 
-    def __init__(self, xml_path, expert_actor=None, privileged=False, random_object_pos=False, render_mode="human"):
+    def __init__(self, xml_path, action_type="delta_xy", privileged=False, random_object_pos=False, render_mode="human"):
         super().__init__()
         print("Initializing PickPlaceCustomEnv...")
         self.np_random = None
@@ -52,23 +52,26 @@ class PickPlaceCustomEnv(gym.Env):
         self.data = mujoco.MjData(self.model)
 
         ## Option Flags
-        self.expert_actor = expert_actor
+        self.action_type = action_type
         self.privileged = privileged
         self.random_object_pos = random_object_pos
 
         ## Define action and observation space
-        if self.privileged:
-            action_dim = 2 # delta x, delta y
-            action_low = np.array([-1, -1], dtype=np.float32)
-            action_high = np.array([1, 1], dtype=np.float32)
-            self.action_space = spaces.Box(low=action_low, high=action_high, shape=(action_dim,), dtype=np.float32)
-        else:
+        if action_type == "delta_xy": # 0.02 / (25*2(10^-3)) seconds = 1 m/s = 100 cm/s)
+            action_dim = 2
+            action_low = np.ones(action_dim) * (-0.02)
+            action_high = np.ones(action_dim) * (0.02)
+        elif action_type == "delta_angle": # 7.5 degrees / (25*2(10^-3)) seconds = 150 degrees/s
             action_dim = self.model.nu # number of actuators/controls = dim(ctrl)
-            action_low = np.ones(action_dim) * (-3 / 180 * np.pi) # NOTE for delta joint angles
-            action_high = np.ones(action_dim) * (3 / 180 * np.pi)
-            # action_low = self.model.actuator_ctrlrange[:, 0].copy() # NOTE for absolute joint angles
-            # action_high = self.model.actuator_ctrlrange[:, 1].copy()
-            self.action_space = spaces.Box(low=action_low, high=action_high, shape=(action_dim,), dtype=np.float32)
+            action_low = np.ones(action_dim) * (-7.5 / 180 * np.pi)
+            action_high = np.ones(action_dim) * (7.5 / 180 * np.pi)
+        elif action_type == "absolute_angle":
+            action_dim = self.model.nu # number of actuators/controls = dim(ctrl)
+            action_low = self.model.actuator_ctrlrange[:, 0].copy()
+            action_high = self.model.actuator_ctrlrange[:, 1].copy()
+        else:
+            raise ValueError(f"Invalid action type: {action_type}")
+        self.action_space = spaces.Box(low=action_low, high=action_high, shape=(action_dim,), dtype=np.float32)
 
         state_dim = self.model.nu + 3 # number of joints + EE pos
         image_dim = (2, 256, 256, 3) # 256x256x6 image (2xHxWxC, 0-1 RGB image)
@@ -164,15 +167,12 @@ class PickPlaceCustomEnv(gym.Env):
         obs = self._get_obs()
 
         ## Prep imitation info
-        if self.expert_actor:
-            obs_tensor = {"privileged": torch.from_numpy(obs["privileged"].copy())}
-            imitation_action, imitation_ee = self._get_imitation_info(obs_tensor)
-
-        info = {
-            "imitation_action": imitation_action,
-            "imitation_ee": imitation_ee,
-            "ee_pos": self.data.site_xpos[self.end_effector_id].copy(),
-        }
+        info = dict()
+        info["ee_pos"] = self.data.site_xpos[self.end_effector_id].copy()
+        info["target_ee_pos"] = None
+        info["object_pos"] = self.data.qpos[7:10].copy()
+        info["joint_angles_qpos"] = self.data.qpos[:7].copy()
+        info["joint_angles_ctrl"] = self.data.ctrl[:7].copy()
         return obs, info
 
     def step(self, action):
@@ -181,7 +181,8 @@ class PickPlaceCustomEnv(gym.Env):
         # self.data.ctrl[:] = action + self.model.keyframe('home').ctrl # takes in delta joint angles from home position
 
         ## Handle action
-        if self.privileged: # if privileged, action is delta x, y
+        target_pos = None
+        if self.action_type == "delta_xy":
             ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id].copy() # x,y,z
             ee_x += action[0]
             ee_y += action[1]
@@ -192,9 +193,15 @@ class PickPlaceCustomEnv(gym.Env):
             ikresults = ik.qpos_from_site_pose(mjmodel=self.model, mjdata=self.data, site_name="end_effector", target_pos=target_pos, target_quat=target_quat, joint_names=joint_names)
             action = ikresults[0][:7]
             self.data.ctrl[:] = action
-        else: # if non-privileged, action is delta joint angles
+        elif self.action_type == "delta_angle":
             self.data.ctrl[:] += action
-        mujoco.mj_step(self.model, self.data, 10) # 10 substeps 2ms each = 20ms = 50Hz
+        elif self.action_type == "absolute_angle":
+            self.data.ctrl[:] = action
+        else:
+            raise ValueError(f"Invalid action type: {self.action_type}")
+        
+        ## Step simulation
+        mujoco.mj_step(self.model, self.data, 25) # 25 substeps 2ms each = 50ms = 20Hz
 
         ## Update object info
         self.current_object_pos = self.data.qpos[self.object_qpos_addr : self.object_qpos_addr + 3].copy() # x,y,z
@@ -211,15 +218,12 @@ class PickPlaceCustomEnv(gym.Env):
         reward = self._get_reward()
 
         ## Prep imitation info
-        if self.expert_actor:
-            obs_tensor = {"privileged": torch.from_numpy(obs["privileged"].copy())}
-            imitation_action, imitation_ee = self._get_imitation_info(obs_tensor)
-
-        info = {
-            "imitation_action": imitation_action,
-            "imitation_ee": imitation_ee,
-            "ee_pos": self.data.site_xpos[self.end_effector_id].copy(),
-        }
+        info = dict()
+        info["ee_pos"] = self.data.site_xpos[self.end_effector_id].copy()
+        info["target_ee_pos"] = target_pos
+        info["object_pos"] = self.data.qpos[7:10].copy()
+        info["joint_angles_qpos"] = self.data.qpos[:7].copy()
+        info["joint_angles_ctrl"] = self.data.ctrl[:7].copy()
 
         ## Update previous object position
         self.prev_object_pos = self.current_object_pos.copy()
@@ -258,7 +262,7 @@ class PickPlaceCustomEnv(gym.Env):
         return action.astype(np.float32), target_pos.astype(np.float32)
 
     def _get_done(self):
-        done = self.success or self.out_of_bounds or self.wrong_target # or self.too_far
+        done = self.success or self.out_of_bounds or self.wrong_target or self.too_far
         return done
 
     def _get_reward(self):
@@ -271,11 +275,12 @@ class PickPlaceCustomEnv(gym.Env):
         ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
         attachment_x, attachment_y, attachment_z = self.data.site_xpos[self.attachment_site_id]
 
-        # # z height penalty for ee to be within 0.25 +/- 0.025 (object center height)
-        # if ee_z > 0.275:
-        #     reward -= 0.04 * abs(ee_z - 0.25) # if 0.40 height (above block), 0.04 * (0.05) = 0.002 (-0.6)
-        # elif ee_z < 0.215:
-        #     reward -= 0.06 * abs(ee_z - 0.25) # if 0.20 height (table height), 0.06 * (0.05) = 0.003 (-0.9)
+        # z height penalty for ee to be within 0.25 +/- 0.025 (object center height)
+        if not self.action_type != "delta_xy": # delta_xy fixes z height
+            if ee_z > 0.255:
+                reward -= 0.04 * abs(ee_z - 0.25)
+            elif ee_z < 0.245:
+                reward -= 0.06 * abs(ee_z - 0.25)
 
         # # upright penalty for ee, angle always positive 0 to 180 deg
         # # if 90 degree,  0.005 * 90/180 = 0.005 (-0.75)
@@ -287,7 +292,6 @@ class PickPlaceCustomEnv(gym.Env):
         #     reward -= 0.005 * angle / np.pi
 
         ## distance penalty for ee_x, ee_y to be close to object_x, object_y
-        # if 0.2 distance, penalty = 0.01 * 0.2 = 0.004 (-0.6)
         distance = np.linalg.norm((object_x - ee_x, object_y - ee_y))
         if distance > 0.10: # NOTE 0.0707 corner of object + 0.01 radius of ee
             reward -= 0.02 * distance
@@ -298,22 +302,25 @@ class PickPlaceCustomEnv(gym.Env):
         prev_distance = np.linalg.norm(self.prev_object_pos[:2] - self.target_pos[:2])
         initial_distance = np.linalg.norm(self.initial_object_pos[:2] - self.target_pos[:2])
         # reward += 2 * (prev_distance - current_distace)
-        reward += (prev_distance - current_distace) / initial_distance
+        reward += 2 * (prev_distance - current_distace) / initial_distance
         if self.success:
             print(f"WE DID IT! {self.current_object_pos} -> {self.target_pos}")
-            reward += 1
+            reward += 1.5
 
         ## Living penalty
-        # max penalty = 0.002 * 300 = -0.6
-        reward -= 0.002
+        # max penalty = 0.004 * 300 = -1.2
+        reward -= 0.004
 
         ## Terimination rewards
-        if self.out_of_bounds: # or self.too_far:
-            reward -= 1
+        if self.out_of_bounds:
+            reward -= 3
+            print(f"Out of bounds! Object: {self.current_object_pos}, EE: {ee_x, ee_y, ee_z} -> {self.target_pos}")
+        if self.too_far:
+            reward -= 3
+            print(f"Too far! Object: {self.current_object_pos}, EE: {ee_x, ee_y, ee_z} -> {self.target_pos}")
         if self.wrong_target:
-            reward -= 1
-            print(f"Wrong target! {self.current_object_pos} -> {self.target_pos}")
-
+            reward -= 1.5
+            print(f"Wrong target! Object: {self.current_object_pos}, EE: {ee_x, ee_y, ee_z} -> {self.target_pos}")
         return reward
     
     def _check_success(self):

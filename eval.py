@@ -106,7 +106,7 @@ else:
         std_max=std_max,
         visual_feature_dim=128,
     )
-weights_path = os.path.expanduser("~/ME5406/project_2_code/saved_pth/privileged_actor.pth") 
+weights_path = os.path.expanduser("~/Jeric/Push_MuJoCo/saved_pth/privileged_actor.pth") 
 actor.load_state_dict(torch.load(weights_path))
 actor.eval()  # Set the model to evaluation mode
 actor.to("cuda")  # Move the model to GPU

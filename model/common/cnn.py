@@ -9,7 +9,7 @@ class ImageEncoder(nn.Module):
         def conv_block(in_channels, out_channels, kernel_size=3, stride=2, padding=1):
             return nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
-                nn.BatchNorm2d(out_channels),
+                # nn.BatchNorm2d(out_channels),
                 nn.ReLU(inplace=True)
             )
 
@@ -32,7 +32,7 @@ class ImageEncoder(nn.Module):
             self.projection = nn.Identity()
 
         self.feature_dim = feature_dim
-        print("Image Encoder Output Shape: ", self.feature_dim)
+        # print("Image Encoder Output Shape: ", self.feature_dim)
 
     def forward(self, image_tensor):
         x = self.encoder(image_tensor)

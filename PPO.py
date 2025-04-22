@@ -16,7 +16,7 @@ from torch.optim import Adam
 
 
 class PPOAgent():
-    def __init__(self, venv, actor, critic, device=None):
+    def __init__(self, venv, actor, critic, expert_actor, device=None):
         self.is_hyperparams_init = False
         
         ## Initialize Vectorized Environment
@@ -29,26 +29,33 @@ class PPOAgent():
         self.actor.to(self.device)
         self.critic.to(self.device)
 
+        ## Initialize Expert Actor
+        self.expert_actor = expert_actor
+        if self.expert_actor is not None:
+            self.expert_actor.to(self.device)
+            self.expert_actor.eval()  # Set expert actor to evaluation mode
+            self.expert_actor.requires_grad_(False)
+
     def init_hyperparameters(self,
                              name="PPO-Push",
                              use_wandb=False,
-                             save_model_interval=100,
-                             save_image_interval=20,
-                             n_steps=500,
-                             n_envs=12,
-                             batch_size=128,
-                             n_updates_per_iteration=5,
-                             gamma=0.95,
+                             save_model_interval=50,
+                             save_image_interval=50,
+                             n_steps=300,
+                             n_envs=20,
+                             batch_size=300,
+                             n_updates_per_iteration=10,
+                             gamma=0.999,
                              gae_lambda=0.95,
-                             imitation_reward_coef=0.0,
-                             entropy_coef=0.0001,
+                             imitation_reward_coef=0.005,
+                             entropy_coef=1e-2,
                              entropy_coef_decay=0.99,
                              clip=0.2,
-                             actor_lr=0.0005,
-                             critic_lr=0.001,
-                             privileged=False,
-                             random_object_pos=False,
+                             actor_lr=1e-4,
+                             critic_lr=5e-4,
                              ):
+        self.name = name                                            # Name of the experiment
+        self.use_wandb = use_wandb                                  # Use wandb for logging
         self.save_model_interval = save_model_interval              # Save model every n iterations
         self.save_image_interval = save_image_interval              # Save images every n iterations
         self.n_steps = n_steps                                      # number of steps in environment
@@ -63,14 +70,9 @@ class PPOAgent():
         self.clip = clip                                            # PPO clip parameter (recommended by paper)
         self.actor_lr = actor_lr                                    # Actor Learning Rate
         self.critic_lr = critic_lr                                  # Critic Learning Rate
-        self.use_wandb = use_wandb                                  # Use wandb for logging
 
         self.actor_optim = Adam(self.actor.parameters(), lr=self.actor_lr)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.critic_lr)
-
-        ## Initialize environment parameters
-        self.privileged = privileged                                # Use privileged information
-        self.random_object_pos = random_object_pos                  # Randomize object position
 
         self.is_hyperparams_init = True                             # Flag to check if hyperparameters are initialized
 
@@ -88,6 +90,7 @@ class PPOAgent():
                     "gamma": self.gamma,
                     "gae_lambda": self.gae_lambda,
                     "entropy_coef": self.entropy_coef,
+                    "entropy_coef_decay": self.entropy_coef_decay,
                     "clip": self.clip,
                     "actor_lr": self.actor_lr,
                     "critic_lr": self.critic_lr
@@ -258,7 +261,7 @@ class PPOAgent():
         rollout_firsts = np.zeros((self.n_steps + 1, self.n_envs)) # (n_steps, n_envs) - stores first step flags at each step
 
         ## Reset environment
-        options = {"privileged": self.privileged, "random_object_pos": self.random_object_pos}
+        options = None
         prev_obs, prev_info = self.venv.reset(options=options)
         rollout_firsts[0] = 1 # First step
 
@@ -277,21 +280,39 @@ class PPOAgent():
             action, log_prob, value = self.get_action(prev_obs) # get action from actor network
             obs, rew, terminated, truncated, info = self.venv.step(action)
 
+            ## Some debugging
+            prev_ee_pos = prev_info["ee_pos"] # (n_envs, ee_dim)
+            prev_target_ee_pos = prev_info["target_ee_pos"] # (n_envs, ee_dim)
+            prev_object_pos = prev_info["object_pos"] # (n_envs, object_dim)
+            prev_joint_angles_qpos = prev_info["joint_angles_qpos"] # (n_envs, joint_dim)
+            prev_joint_angles_ctrl = prev_info["joint_angles_ctrl"] # (n_envs, joint_dim)
+            curr_ee_pos = info["ee_pos"] # (n_envs, ee_dim)
+            curr_target_ee_pos = info["target_ee_pos"] # (n_envs, ee_dim)
+            curr_object_pos = info["object_pos"] # (n_envs, object_dim)
+            curr_joint_angles_qpos = info["joint_angles_qpos"] # (n_envs, joint_dim)
+            curr_joint_angles_ctrl = info["joint_angles_ctrl"] # (n_envs, joint_dim)
+            # if step % 100 == 0:
+            #     print(
+            #         f"Step: {step}, Action: {action[0]}, Reward: {rew[0]}, Terminated: {terminated[0]}, Truncated: {truncated[0]}\n"
+            #         f"Prev EE Pos: {prev_ee_pos[0]}, Curr EE Pos: {curr_ee_pos[0]}\n"
+            #         f"Prev Target EE Pos: {prev_target_ee_pos[0]}, Curr Target EE Pos: {curr_target_ee_pos[0]}\n"
+            #         f"Prev Object Pos: {prev_object_pos[0]}, Curr Object Pos: {curr_object_pos[0]}\n"
+            #         f"Prev Joint Angles Qpos: {prev_joint_angles_qpos[0]}, Curr Joint Angles Qpos: {curr_joint_angles_qpos[0]}\n"
+            #         f"Prev Joint Angles Ctrl: {prev_joint_angles_ctrl[0]}, Curr Joint Angles Ctrl: {curr_joint_angles_ctrl[0]}"
+            #     )
+            
             ## Compute imitation reward from privileged actor
-            if self.imitation_reward_coef > 0 and not self.privileged:
-                prev_imitation_action = prev_info["imitation_action"] # (n_envs, action_dim)
-                prev_imitation_ee = prev_info["imitation_ee"] # (n_envs, ee_dim)
-                curr_ee_pos = info["ee_pos"] # (n_envs, ee_dim)
+            if self.imitation_reward_coef > 0:
+                obs_tensor = {"privileged": torch.from_numpy(obs["privileged"].astype(np.float32)).to(self.device).float()}
+                dist = self.expert_actor.get_distribution(obs_tensor) # (n_envs, action_dim)
+                imitation_action = dist.mean.detach().cpu().numpy() # (n_envs, action_dim)
 
                 # NOTE: / 0.xx is a hyperparameter, can be tuned, determines the sensitivity of the imitation reward (Gaussian Reward)
-                imitation_action_reward = np.exp(-(np.linalg.norm(prev_imitation_action - action, axis=1) ** 2) / 0.1)
-                imitation_ee_reward = np.exp(-(np.linalg.norm(prev_imitation_ee - curr_ee_pos, axis=1) ** 2) / 0.02)
-                rew += self.imitation_reward_coef * (imitation_action_reward + imitation_ee_reward)
+                imitation_action_reward = np.exp(-(np.linalg.norm(imitation_action - action, axis=1) ** 2) / 0.0025)
+                rew += self.imitation_reward_coef * imitation_action_reward
 
                 if step % 100 == 0:
-                    print(f"Imitation Delta Angles: {prev_imitation_action[0]}, Actual Delta Angles: {action[0]}")
-                    print(f"Imitation EE Pos: {prev_imitation_ee[0]}, Actual EE Pos: {curr_ee_pos[0]}")
-                    print(f"Imitation Reward: {imitation_action_reward}")
+                    print(f"Imitation Action: {imitation_action[0]}, Action: {action[0]}, Imitation Action Reward: {imitation_action_reward[0]}")
 
             ## Collect data
             rollout_actions[step] = action
