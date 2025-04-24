@@ -44,10 +44,12 @@ class PPOAgent():
                              n_steps=300,
                              n_envs=20,
                              batch_size=300,
+                             grad_accumulation_steps=1,
                              n_updates_per_iteration=10,
                              gamma=0.999,
                              gae_lambda=0.95,
-                             imitation_reward_coef=0.005,
+                             vf_coef=0.5,
+                             bc_loss_coeff=0.05,
                              entropy_coef=1e-2,
                              entropy_coef_decay=0.99,
                              clip=0.2,
@@ -61,10 +63,12 @@ class PPOAgent():
         self.n_steps = n_steps                                      # number of steps in environment
         self.n_envs = n_envs                                        # number of parallel environments
         self.batch_size = batch_size                                # batch size for training
+        self.grad_accumulation_steps = grad_accumulation_steps      # number of gradient accumulation steps
         self.n_updates_per_iteration = n_updates_per_iteration      # number of epochs per iteration
         self.gamma = gamma                                          # Discount Factor
         self.gae_lambda = gae_lambda                                # GAE Lambda
-        self.imitation_reward_coef = imitation_reward_coef          # Imitation Reward Coefficient
+        self.vf_coef = vf_coef                                      # Value Function Coefficient
+        self.bc_loss_coeff = bc_loss_coeff                          # Behavior Cloning Loss Coefficient
         self.entropy_coef = entropy_coef                            # Entropy Coefficient
         self.entropy_coef_decay = entropy_coef_decay                # Entropy Coefficient Decay
         self.clip = clip                                            # PPO clip parameter (recommended by paper)
@@ -86,9 +90,12 @@ class PPOAgent():
                     "n_steps": self.n_steps,
                     "n_envs": self.n_envs,
                     "batch_size": self.batch_size,
+                    "grad_accumulation_steps": self.grad_accumulation_steps,
                     "n_updates_per_iteration": self.n_updates_per_iteration,
                     "gamma": self.gamma,
                     "gae_lambda": self.gae_lambda,
+                    "vf_coef": self.vf_coef,
+                    "bc_loss_coeff": self.bc_loss_coeff,
                     "entropy_coef": self.entropy_coef,
                     "entropy_coef_decay": self.entropy_coef_decay,
                     "clip": self.clip,
@@ -131,6 +138,7 @@ class PPOAgent():
             num_batches = (num_samples + self.batch_size - 1) // self.batch_size  # Calculate number of batches
             
             ## Loop to update the network
+            average_bc_loss = 0
             average_actor_loss = 0
             average_critic_loss = 0
             average_entropy = 0
@@ -163,17 +171,25 @@ class PPOAgent():
                     surr1 = ratios * batch_advantages
                     surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * batch_advantages
 
+                    ## Get BC loss from privileged actor
+                    bc_loss = 0
+                    if self.expert_actor is not None:
+                        dist = self.expert_actor.get_distribution(batch_obs) # (n_envs, action_dim)
+                        imitation_action = dist.mean.detach() # (n_envs, action_dim)
+                        _, bc_log_probs, _ = self.evaluate(batch_obs, imitation_action) # (n_envs, action_dim)
+                        bc_loss = -bc_log_probs.mean()
+
+                        if batch_idx == 0:
+                            print(f"BC Loss: {bc_loss.item()}, Imitation Action: {imitation_action[0]}, bc_log_probs: {bc_log_probs[0]}, Action: {batch_actions[0]}, Log Probs: {batch_log_probs_new[0]}")
+
                     ## Loss Function
-                    actor_loss = -torch.min(surr1, surr2) - self.entropy_coef * entropy
-                    actor_loss = actor_loss.mean()
+                    actor_loss = (-torch.min(surr1, surr2)).mean()
                     critic_loss = torch.nn.MSELoss()(batch_values_new, batch_returns)
-                    total_loss = actor_loss + critic_loss
-                    # actor_loss = (-torch.min(surr1, surr2)).mean()
-                    # critic_loss = torch.nn.MSELoss()(batch_values_new, batch_returns)
-                    # total_loss = actor_loss + 0.5 * critic_loss - self.entropy_coef * entropy
+                    total_loss = actor_loss + self.vf_coef * critic_loss - self.entropy_coef * entropy.mean() + self.bc_loss_coeff * bc_loss
 
                     ## Logging
                     with torch.no_grad():
+                        average_bc_loss += bc_loss.item()
                         average_actor_loss += actor_loss.item()
                         average_critic_loss += critic_loss.item()
                         average_entropy += entropy.mean().item()
@@ -183,14 +199,13 @@ class PPOAgent():
                         average_kl += ((ratios - 1) - (batch_log_probs_new - batch_log_probs_old)).mean()
 
                     ## Update networks
-                    self.actor_optim.zero_grad()
-                    actor_loss.backward()
-                    self.actor_optim.step()
-
-                    self.critic_optim.zero_grad()
-                    critic_loss.backward()
-                    self.critic_optim.step()
-                    # total_loss.backward()
+                    total_loss.backward()
+                    if (batch_idx + 1) % self.grad_accumulation_steps == 0:
+                        self.actor_optim.step()
+                        self.critic_optim.step()
+                        self.actor_optim.zero_grad()
+                        self.critic_optim.zero_grad()
+                        print(f"Batch {batch_idx} gradient step completed")
             
             ## Save model every self.save_model_interval iterations
             if itr % self.save_model_interval == 0:
@@ -198,11 +213,12 @@ class PPOAgent():
                 print(f"Model saved at iteration {itr}")
 
             ## Logging Average losses
+            average_bc_loss /= num_batches * self.n_updates_per_iteration
             average_actor_loss /= num_batches * self.n_updates_per_iteration
             average_critic_loss /= num_batches * self.n_updates_per_iteration
             average_entropy /= num_batches * self.n_updates_per_iteration
             average_total_loss /= num_batches * self.n_updates_per_iteration
-            print(f"Average Actor Loss: {average_actor_loss:.7}, Average Critic Loss: {average_critic_loss:.7f}, Average Entropy: {average_entropy:.7f}, Average Total Loss: {average_total_loss:.7f}")
+            print(f"BC Loss: {average_bc_loss:.7f}, Actor Loss: {average_actor_loss:.7}, Critic Loss: {average_critic_loss:.7f}, Entropy: {average_entropy:.7f}, Total Loss: {average_total_loss:.7f}")
             
             ## Logging PPO stats
             average_ratio /= num_batches * self.n_updates_per_iteration
@@ -221,6 +237,7 @@ class PPOAgent():
             if self.use_wandb:
                 wandb.log(
                     {
+                    "bc_loss": average_bc_loss,
                     "actor_loss": average_actor_loss,
                     "critic_loss": average_critic_loss,
                     "entropy": average_entropy,
@@ -279,40 +296,6 @@ class PPOAgent():
             ## Step the environment
             action, log_prob, value = self.get_action(prev_obs) # get action from actor network
             obs, rew, terminated, truncated, info = self.venv.step(action)
-
-            ## Some debugging
-            prev_ee_pos = prev_info["ee_pos"] # (n_envs, ee_dim)
-            prev_target_ee_pos = prev_info["target_ee_pos"] # (n_envs, ee_dim)
-            prev_object_pos = prev_info["object_pos"] # (n_envs, object_dim)
-            prev_joint_angles_qpos = prev_info["joint_angles_qpos"] # (n_envs, joint_dim)
-            prev_joint_angles_ctrl = prev_info["joint_angles_ctrl"] # (n_envs, joint_dim)
-            curr_ee_pos = info["ee_pos"] # (n_envs, ee_dim)
-            curr_target_ee_pos = info["target_ee_pos"] # (n_envs, ee_dim)
-            curr_object_pos = info["object_pos"] # (n_envs, object_dim)
-            curr_joint_angles_qpos = info["joint_angles_qpos"] # (n_envs, joint_dim)
-            curr_joint_angles_ctrl = info["joint_angles_ctrl"] # (n_envs, joint_dim)
-            # if step % 100 == 0:
-            #     print(
-            #         f"Step: {step}, Action: {action[0]}, Reward: {rew[0]}, Terminated: {terminated[0]}, Truncated: {truncated[0]}\n"
-            #         f"Prev EE Pos: {prev_ee_pos[0]}, Curr EE Pos: {curr_ee_pos[0]}\n"
-            #         f"Prev Target EE Pos: {prev_target_ee_pos[0]}, Curr Target EE Pos: {curr_target_ee_pos[0]}\n"
-            #         f"Prev Object Pos: {prev_object_pos[0]}, Curr Object Pos: {curr_object_pos[0]}\n"
-            #         f"Prev Joint Angles Qpos: {prev_joint_angles_qpos[0]}, Curr Joint Angles Qpos: {curr_joint_angles_qpos[0]}\n"
-            #         f"Prev Joint Angles Ctrl: {prev_joint_angles_ctrl[0]}, Curr Joint Angles Ctrl: {curr_joint_angles_ctrl[0]}"
-            #     )
-            
-            ## Compute imitation reward from privileged actor
-            if self.imitation_reward_coef > 0:
-                obs_tensor = {"privileged": torch.from_numpy(obs["privileged"].astype(np.float32)).to(self.device).float()}
-                dist = self.expert_actor.get_distribution(obs_tensor) # (n_envs, action_dim)
-                imitation_action = dist.mean.detach().cpu().numpy() # (n_envs, action_dim)
-
-                # NOTE: / 0.xx is a hyperparameter, can be tuned, determines the sensitivity of the imitation reward (Gaussian Reward)
-                imitation_action_reward = np.exp(-(np.linalg.norm(imitation_action - action, axis=1) ** 2) / 0.0025)
-                rew += self.imitation_reward_coef * imitation_action_reward
-
-                if step % 100 == 0:
-                    print(f"Imitation Action: {imitation_action[0]}, Action: {action[0]}, Imitation Action Reward: {imitation_action_reward[0]}")
 
             ## Collect data
             rollout_actions[step] = action

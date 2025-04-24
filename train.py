@@ -11,45 +11,54 @@ from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 if __name__ == "__main__":
     ## Environment Hyperparameters
     action_type = "delta_xy" # delta_xy, delta_angle, absolute_angle
-    privileged = True # Train with privileged information?
+    privileged = False # Train with privileged information?
     random_object_pos = True # Randomize object position?
-
-    ## PPO Hyperparameters
-    use_wandb = True
     max_episode_steps = 300
     n_envs = 30
     vectorization_mode = "async"
-    save_model_interval = 50
-    save_image_interval = 50
-    batch_size = 450
+
+    ## PPO Hyperparameters
     n_iterations = 10000
 
     if privileged: # Privileged PPO Hyperparameters
+        use_wandb = True
         name = "privileged-delta_xy-random"
+        save_model_interval = 50
+        save_image_interval = 50
+        batch_size = 300
+        grad_accumulation_steps = 1
         n_updates_per_iteration = 10
         gamma = 0.999
         gae_lambda = 0.95
-        imitation_reward_coef = 0.0
-        entropy_coef = 5e-3
-        entropy_coef_decay = 0.98
-        clip = 0.2
-        actor_lr = 1e-4
-        critic_lr = 5e-4
-    else: # Non-Privileged PPO Hyperparameters
-        name = "imitation-delta_xy-no_random"
-        n_updates_per_iteration = 10
-        gamma = 0.999
-        gae_lambda = 0.95
-        imitation_reward_coef = 0.005
+        vf_coef = 0.5
+        bc_loss_coef = 0.0
         entropy_coef = 1e-3
         entropy_coef_decay = 0.99
         clip = 0.2
-        actor_lr = 1e-4
+        actor_lr = 3e-4
         critic_lr = 5e-4
+    else: # Non-Privileged PPO Hyperparameters
+        use_wandb = True
+        name = "imitation-delta_xy-random"
+        save_model_interval = 50
+        save_image_interval = 50
+        batch_size = 150
+        grad_accumulation_steps = 3
+        n_updates_per_iteration = 10
+        gamma = 0.999
+        gae_lambda = 0.95
+        vf_coef = 0.5
+        bc_loss_coef = 0.05
+        entropy_coef = 1e-3
+        entropy_coef_decay = 0.99
+        clip = 0.2
+        actor_lr = 3e-4
+        critic_lr = 5e-4
+        expert_path = os.path.expanduser("~/Jeric/Push_MuJoCo/saved_pth/privileged_actor.pth")
 
     ## Network Hyperparameters
     if action_type == "delta_xy":
-        fixed_std = 0.01
+        fixed_std = 0.015
         learn_fixed_std = True
         std_min = 0.0025
         std_max = 0.025
@@ -161,7 +170,7 @@ if __name__ == "__main__":
         critic = PushNNCritic(
             backbone=image_encoder_critic,
             state_dim=state_dim,
-            mlp_dims=[256, 256, 256],
+            mlp_dims=[512, 512, 512],
             activation_type="Mish",
             use_layernorm=False,
             residual_style=True,
@@ -173,7 +182,7 @@ if __name__ == "__main__":
             action_high=action_high,
             privileged_dim=privileged_dim,
             action_dim=action_dim,
-            mlp_dims=[512, 512, 512, 512],
+            mlp_dims=[1024, 1024, 1024, 1024],
             activation_type="Mish",
             tanh_output=True,
             residual_style=True,
@@ -184,8 +193,7 @@ if __name__ == "__main__":
             std_min=std_min,
             std_max=std_max,
         )
-        pth_path = os.path.expanduser("~/Jeric/Push_MuJoCo/saved_pth/privileged_actor.pth")
-        expert_actor.load_state_dict(torch.load(pth_path))
+        expert_actor.load_state_dict(torch.load(expert_path))
     
     ## Initialize PPO Agent
     rl_agent = PPOAgent(venv, actor=actor, critic=critic, expert_actor=expert_actor)
@@ -196,10 +204,12 @@ if __name__ == "__main__":
                                     n_steps=max_episode_steps,
                                     n_envs=n_envs,
                                     batch_size=batch_size,
+                                    grad_accumulation_steps=grad_accumulation_steps,
                                     n_updates_per_iteration=n_updates_per_iteration,
                                     gamma=gamma,
                                     gae_lambda=gae_lambda,
-                                    imitation_reward_coef=imitation_reward_coef,
+                                    vf_coef=vf_coef,
+                                    bc_loss_coef=bc_loss_coef,
                                     entropy_coef=entropy_coef,
                                     entropy_coef_decay=entropy_coef_decay,
                                     clip=clip,
