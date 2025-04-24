@@ -10,12 +10,35 @@ from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 
 
 ## Eval Hyperparameters
-max_episode_steps = 300
-eval_steps = 9000
+eval_runs = 50
 
 ## Environment Hyperparameters
-privileged = True
-random_object_pos = False
+action_type = "delta_xy" # delta_xy, delta_angle, absolute_angle
+privileged = True # Train with privileged information?
+random_object_pos = True # Randomize object position?
+max_episode_steps = 300
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+weights_path = f"saved_pth/{'privileged_' if privileged else ''}actor.pth"
+full_weights_path = os.path.join(script_dir, weights_path)
+
+## Network Hyperparameters
+if action_type == "delta_xy":
+    fixed_std = 0.015
+    learn_fixed_std = True
+    std_min = 0.0025
+    std_max = 0.025
+elif action_type == "delta_angle":
+    fixed_std = 0.03
+    learn_fixed_std = True
+    std_min = 0.005
+    std_max = 0.05
+elif action_type == "absolute_angle":
+    fixed_std = 0.03
+    learn_fixed_std = True
+    std_min = 0.005
+    std_max = 0.05
+
 
 ## Load Push Environment
 gym.register(
@@ -27,6 +50,7 @@ gym.register(
 xml_path = "franka_emika_panda/scene_push.xml"
 env = gym.make("PickPlaceCustomEnv-v0",
                 xml_path=xml_path,
+                action_type=action_type,
                 privileged=privileged,
                 random_object_pos=random_object_pos,
                 render_mode="human",
@@ -37,36 +61,21 @@ image_dim = env.observation_space["image"].shape[1:] # (B, N, H, W, C) -> (H, W,
 image_dim = (image_dim[2], image_dim[0], image_dim[1]) # (H, W, C) -> (C, H, W)
 privileged_dim = env.observation_space["privileged"].shape[0]
 action_dim = env.action_space.shape[0]
+action_low = env.action_space.low
+action_high = env.action_space.high
 print(f"State Space: {env.observation_space['state']}")
 print(f"Image Space: {env.observation_space['image']}")
 print(f"Privileged Space: {env.observation_space['privileged']}")
 print(f"Action Space: {env.action_space}")
-
-# NOTE: action is delta x, y pos (magnitude of 0.05 / 10*2(10^-3) seconds = 0.5 m/s)
-privileged_action_dim = 2 # delta x, delta y
-privileged_action_high = np.ones(privileged_action_dim) * 0.05
-privileged_action_low = np.ones(privileged_action_dim) * (-0.05)
-
-# NOTE: action is delta joint angles (magnitude of 3 degrees / 10*2(10^-3) seconds = 150 degrees/s)
-action_dim = 7 # 7 delta joint angles
-action_high = np.ones(action_dim) * (3 / 180 * np.pi)
-action_low = np.ones(action_dim) * (-3 / 180 * np.pi)
-# action_high = venv.action_space.high # NOTE: for absolute angles action
-# action_low = venv.action_space.low
+print(f"Action Low: {action_low}, Action High: {action_high}")
 
 if privileged: 
-    ## Network Hyperparameters
-    fixed_std = 0.03
-    learn_fixed_std = True
-    std_min = 0.005
-    std_max = 0.05
-    
     actor = PushNNPrivilegedActor(
-        action_low=privileged_action_low,
-        action_high=privileged_action_high,
+        action_low=action_low,
+        action_high=action_high,
         privileged_dim=privileged_dim,
-        action_dim=privileged_action_dim,
-        mlp_dims=[512, 512, 512, 512],
+        action_dim=action_dim,
+        mlp_dims=[1024, 1024, 1024, 1024],
         activation_type="Mish",
         tanh_output=True,
         residual_style=True,
@@ -78,12 +87,6 @@ if privileged:
         std_max=std_max,
     )
 else:
-    ## Network Hyperparameters
-    fixed_std = 0.03
-    learn_fixed_std = True
-    std_min = 0.005
-    std_max = 0.05
-
     image_encoder_actor = DualImageEncoder(
         image_input_shape=image_dim,
         feature_dim=256,
@@ -94,7 +97,7 @@ else:
         action_high=action_high,
         state_dim=state_dim,
         action_dim=action_dim,
-        mlp_dims=[512, 512, 512, 512],
+        mlp_dims=[1024, 1024, 1024, 1024],
         activation_type="Mish",
         tanh_output=True,
         residual_style=True,
@@ -106,35 +109,54 @@ else:
         std_max=std_max,
         visual_feature_dim=128,
     )
-weights_path = os.path.expanduser("~/Jeric/Push_MuJoCo/saved_pth/privileged_actor.pth") 
-actor.load_state_dict(torch.load(weights_path))
+actor.load_state_dict(torch.load(full_weights_path))
 actor.eval()  # Set the model to evaluation mode
 actor.to("cuda")  # Move the model to GPU
 
-obs, info = env.reset()
-print(f"Obs: State: {obs['state'].shape}, Image: {obs['image'].shape}")
+n_success = 0
+n_out_of_bounds = 0
+n_too_far = 0
+n_wrong_target = 0
+n_truncated = 0
+rewards = []
 
-for step in range(eval_steps):
-    print(f"Step: {step}")
-    print(f"Obs: {obs['state'].shape}, {obs['image'].shape}")
-    obs = {key: torch.from_numpy(obs[key]).to("cuda").float().unsqueeze(0) for key in obs.keys()}  # Convert to torch tensors
-    obs["image"] = obs["image"].permute(0, 1, 4, 2, 3)  # Change from (B, N, H, W, C) to (B, N, C, H, W)
-    print(f"Obs: {obs['state'].shape}, {obs['image'].shape}")
-    with torch.no_grad():
-        dist = actor.get_distribution(obs)
-    action = dist.mean # deterministic action
-    
-    action = action.squeeze(0).cpu().numpy()  # Convert to numpy array
-    print(f"Action: {action}")
+for run in range(eval_runs):
+    print(f"Start Run: {run}")
+    episode_reward = 0
+    obs, info = env.reset()
 
-    obs, reward, terminated, truncated, info = env.step(action)
+    for step in range(max_episode_steps):
+        obs = {key: torch.from_numpy(obs[key]).to("cuda").float().unsqueeze(0) for key in obs.keys()}
+        obs["image"] = obs["image"].permute(0, 1, 4, 2, 3)  # Change from (B, N, H, W, C) to (B, N, C, H, W)
+        with torch.no_grad():
+            dist = actor.get_distribution(obs)
+        action = dist.mean # deterministic action
+        action = action.squeeze(0).cpu().numpy()
+        obs, reward, terminated, truncated, info = env.step(action)
 
-    env.render()
-    print(f"Joint Angles: {obs['state'][:7]}")
-    print(f"EE Pose: {obs['state'][7:]}")
-    print(f"Reward: {reward} | Terminated: {terminated} | Truncated: {truncated}")
-    if terminated or truncated:
-        obs, info = env.reset()
+        n_success += info["success"]
+        n_out_of_bounds += info["out_of_bounds"]
+        n_too_far += info["too_far"]
+        n_wrong_target += info["wrong_target"]
+        n_truncated += truncated
+
+        episode_reward += reward
+
+        env.render()
+
+        if terminated or truncated:
+            print(f"Episode finished after {step + 1} steps with reward: {episode_reward}")
+            rewards.append(episode_reward)
+            break
+    print(f"Run: {run} | Episode Reward: {episode_reward} | Success: {info['success']} | Out of Bounds: {info['out_of_bounds']} | Too Far: {info['too_far']} | Wrong Target: {info['wrong_target']}")
     print(f"=="*20)
-
 env.close()
+
+success_rate = n_success / eval_runs
+out_of_bounds_rate = n_out_of_bounds / eval_runs
+too_far_rate = n_too_far / eval_runs
+wrong_target_rate = n_wrong_target / eval_runs
+truncated_rate = n_truncated / eval_runs
+failure_rate = (n_out_of_bounds + n_too_far + n_wrong_target + n_truncated) / eval_runs
+print(f"Success Rate: {success_rate} | Out of Bounds Rate: {out_of_bounds_rate} | Too Far Rate: {too_far_rate} | Wrong Target Rate: {wrong_target_rate} | Truncated Rate: {truncated_rate} | Failure Rate: {failure_rate}")
+print(f"Mean Episode Reward: {np.mean(rewards)} | Std Episode Reward: {np.std(rewards)}")

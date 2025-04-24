@@ -68,7 +68,7 @@ class PPOAgent():
         self.gamma = gamma                                          # Discount Factor
         self.gae_lambda = gae_lambda                                # GAE Lambda
         self.vf_coef = vf_coef                                      # Value Function Coefficient
-        self.bc_loss_coef = bc_loss_coef                          # Behavior Cloning Loss Coefficient
+        self.bc_loss_coef = bc_loss_coef                            # Behavior Cloning Loss Coefficient
         self.entropy_coef = entropy_coef                            # Entropy Coefficient
         self.entropy_coef_decay = entropy_coef_decay                # Entropy Coefficient Decay
         self.clip = clip                                            # PPO clip parameter (recommended by paper)
@@ -162,6 +162,7 @@ class PPOAgent():
 
                     ## Normalize batch advantages
                     batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
+                    batch_advantages = torch.clamp(batch_advantages, -5, 5)
 
                     ## Get new log probabilities and values
                     batch_values_new, batch_log_probs_new, entropy = self.evaluate(batch_obs, batch_actions)
@@ -337,7 +338,7 @@ class PPOAgent():
         dist = self.actor.get_distribution(obs)  # Get distribution from actor network
         value = self.critic(obs)  # Get value from critic network
         action = dist.sample()  # shape: (batch_size, action_dim)
-        action = torch.clamp(action, self.actor.action_low, self.actor.action_high)  # Clip action to action space
+        # action = torch.clamp(action, self.actor.action_low, self.actor.action_high)  # Clip action to action space
         log_prob = dist.log_prob(action)  # shape: (batch_size,)
         return action.detach().cpu().numpy(), log_prob.detach().cpu().numpy(), value.detach().cpu().squeeze(1).numpy()
     

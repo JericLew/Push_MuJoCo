@@ -11,7 +11,7 @@ from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 if __name__ == "__main__":
     ## Environment Hyperparameters
     action_type = "delta_xy" # delta_xy, delta_angle, absolute_angle
-    privileged = True # Train with privileged information?
+    privileged = False # Train with privileged information?
     random_object_pos = True # Randomize object position?
     max_episode_steps = 300
     n_envs = 30
@@ -30,10 +30,10 @@ if __name__ == "__main__":
         n_updates_per_iteration = 10
         gamma = 0.999
         gae_lambda = 0.95
-        vf_coef = 0.5
+        vf_coef = 0.01
         bc_loss_coef = 0.0
-        entropy_coef = 1e-3
-        entropy_coef_decay = 0.99
+        entropy_coef = 0.0 # 1e-5
+        entropy_coef_decay = 0.95
         clip = 0.2
         actor_lr = 3e-4
         critic_lr = 5e-4
@@ -47,10 +47,10 @@ if __name__ == "__main__":
         n_updates_per_iteration = 10
         gamma = 0.999
         gae_lambda = 0.95
-        vf_coef = 0.5
-        bc_loss_coef = 0.05
-        entropy_coef = 1e-3
-        entropy_coef_decay = 0.99
+        vf_coef = 0.01
+        bc_loss_coef = 0.005
+        entropy_coef = 1e-6
+        entropy_coef_decay = 0.95
         clip = 0.2
         actor_lr = 3e-4
         critic_lr = 5e-4
@@ -60,8 +60,8 @@ if __name__ == "__main__":
     if action_type == "delta_xy":
         fixed_std = 0.015
         learn_fixed_std = True
-        std_min = 0.0025
-        std_max = 0.025
+        std_min = 0.01
+        std_max = 0.02
     elif action_type == "delta_angle":
         fixed_std = 0.03
         learn_fixed_std = True
@@ -145,17 +145,13 @@ if __name__ == "__main__":
             image_input_shape=image_dim,
             feature_dim=256,
         )
-        image_encoder_critic = DualImageEncoder(
-            image_input_shape=image_dim,
-            feature_dim=256,
-        )
         actor = PushNNActor(
             backbone=image_encoder_actor,
             action_low=action_low,
             action_high=action_high,
             state_dim=state_dim,
             action_dim=action_dim,
-            mlp_dims=[768, 768, 768, 768],
+            mlp_dims=[1024, 1024, 1024, 1024],
             activation_type="Mish",
             tanh_output=True,
             residual_style=True,
@@ -167,14 +163,12 @@ if __name__ == "__main__":
             std_max=std_max,
             visual_feature_dim=128,
         )
-        critic = PushNNCritic(
-            backbone=image_encoder_critic,
-            state_dim=state_dim,
+        critic = PushNNPrivilegedCritic(
+            privileged_dim=privileged_dim,
             mlp_dims=[512, 512, 512],
             activation_type="Mish",
             use_layernorm=False,
             residual_style=True,
-            visual_feature_dim=128,
             dropout=0.0,
         )
         expert_actor = PushNNPrivilegedActor(

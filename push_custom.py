@@ -168,11 +168,11 @@ class PickPlaceCustomEnv(gym.Env):
 
         ## Prep imitation info
         info = dict()
-        info["ee_pos"] = self.data.site_xpos[self.end_effector_id].copy()
-        info["target_ee_pos"] = None
-        info["object_pos"] = self.data.qpos[7:10].copy()
-        info["joint_angles_qpos"] = self.data.qpos[:7].copy()
-        info["joint_angles_ctrl"] = self.data.ctrl[:7].copy()
+        info["success"] = self.success
+        info["out_of_bounds"] = self.out_of_bounds
+        info["too_far"] = self.too_far
+        info["wrong_target"] = self.wrong_target
+
         return obs, info
 
     def step(self, action):
@@ -219,11 +219,10 @@ class PickPlaceCustomEnv(gym.Env):
 
         ## Prep imitation info
         info = dict()
-        info["ee_pos"] = self.data.site_xpos[self.end_effector_id].copy()
-        info["target_ee_pos"] = target_pos
-        info["object_pos"] = self.data.qpos[7:10].copy()
-        info["joint_angles_qpos"] = self.data.qpos[:7].copy()
-        info["joint_angles_ctrl"] = self.data.ctrl[:7].copy()
+        info["success"] = self.success
+        info["out_of_bounds"] = self.out_of_bounds
+        info["too_far"] = self.too_far
+        info["wrong_target"] = self.wrong_target
 
         ## Update previous object position
         self.prev_object_pos = self.current_object_pos.copy()
@@ -245,22 +244,6 @@ class PickPlaceCustomEnv(gym.Env):
         obs = {"state": state, "image": image, "privileged": privileged}
         return obs
     
-    def _get_imitation_info(self, obs_tensor):
-        with torch.no_grad():
-            dist = self.expert_actor.get_distribution(obs_tensor)
-            action = dist.mean.cpu()# deterministic action
-            action = torch.clamp(action, self.expert_actor.action_low, self.expert_actor.action_high).numpy()
-        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id].copy() # x,y,z
-        ee_x += action[0]
-        ee_y += action[1]
-        ee_z = self.data.qpos[9] # object z position
-        target_pos = np.array([ee_x, ee_y, ee_z])
-        target_quat = np.array([0, 0.7071068, -0.7071068, 0]) # EE straight up
-        joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
-        ikresults = ik.qpos_from_site_pose(mjmodel=self.model, mjdata=self.data, site_name="end_effector", target_pos=target_pos, target_quat=target_quat, joint_names=joint_names)
-        action = ikresults[0][:7] - self.data.ctrl[:7] # delta joint angles
-        return action.astype(np.float32), target_pos.astype(np.float32)
-
     def _get_done(self):
         done = self.success or self.out_of_bounds or self.wrong_target or self.too_far
         return done
