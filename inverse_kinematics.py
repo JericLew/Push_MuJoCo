@@ -1,4 +1,4 @@
-## ADAPTED FROM DM_CONTROL BELOW
+## Adapted from https://github.com/google-deepmind/dm_control/blob/main/dm_control/utils/inverse_kinematics.py
 ## Changed their Python wrapper to mujoco default python wrapper
 
 # Copyright 2017-2018 The dm_control Authors.

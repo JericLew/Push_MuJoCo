@@ -1,4 +1,4 @@
-<mujoco model="panda nohand">
+<mujoco model="panda push">
   <compiler angle="radian" meshdir="assets" autolimits="true"/>
 
   <option integrator="implicitfast" impratio="10"/>

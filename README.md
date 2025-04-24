@@ -1,50 +1,66 @@
-### Create environment
+# `Push_MuJoCo`: PPO for Block Pushing Task with Robot Arm
+
+## Overview
+Hi! This is our group's work for the graduate level course [ME5406 Deep Learning for Robotics](https://nusmods.com/courses/ME5406/deep-learning-for-robotics) @ National University of Singapore (NUS).
+
+We are using the deep reinforcement learning algorithm PPO to learn behaviours for our specified block pushing task with a 7 DoF Franka Emika Panda robot arm.
+
+## Setup
+Setup the `conda` environment for our repository by running
 ```
 conda env create -f environment.yml
 conda activate push_mujoco
 ```
+NOTE: MuJoCo Python require at least one of the three OpenGL rendering backends: EGL (headless, hardware-accelerated), GLFW (windowed, hardware-accelerated), and OSMesa (purely software-based). Refer to Google Deepmind's [dm_control](https://github.com/google-deepmind/dm_control) repository for further instructions.
 
-# Todo
-## Env
-- Top view camera (DONE)
-- complete get obs (DONE)
-- complete get rewards (DONE)
-- complete check  done (DONE)
-- use IK for action space (IK Works, not using for now)
-- Side view camera (DONE)
-- render_mode = "human" only (DONE)
-- Image input to 0-1 (DONE) Not really normalised but is okay for now
-- Start positions to be easier (DONE)
-    - block always infront (DONE)
-    - start at correct level (DONE)
-- Add height penalty (DONE)
-- More Termination cases to speed up convergence
-    - Too far from object 0.25 in xy plane (DONE)
-    - Too far from object 0.3 in z height (DONE)
-- Delta actions (makes sense since intial actions close to 0) (DONE)
-- Privileged Actor (DONE)
-- Imitation info
+## Usage
+To train from scratch:
+```
+python train.py
+```
 
-## PPO
-- PPO base code with two NN (DONE)
-- Integrate Actor & Critic into Single NN (DONE)
-- Integrate with PushNN (DONE)
-- Integrate with Custom Env (DONE)
-- Use vectorised environment (DONE, sync though)
-- ASYNC Vectorised environment (DONE some issue with OpenGL, run export MUJOCO_GL=egl first)
-- Entropy Loss (DONE)
-- Simple Logging (DONE)
-- Saving Models (DONE)
-- Saving Images (DONE)
-- wandb logging (DONE)
-- added entropy decay
-- added imitation reward
+To test model:
+```
+python eval.py
+```
 
-## Network
-- Make a basic network (DONE)
-- Maybe having a seperate Actor and Critic is better (DONE)
-- Two image input (DONE)
-- Parameter log_std (DONE)
-- Two image network (DONE)
-- Increased state encoder depth (DONE)
-- verify if the action and log probs are accurate
+Hyperparameters in both [`train.py`](train.py) and [`eval.py](eval.py) can be changed. Some important hyperparameters include:
+-   `privileged` is a boolean flag to determine whether to train/evaluate the privileged actor or vision actor.
+-   `random_object_pos` boolean flag to determine whether the object position is randomised in the simulation environmnet
+-   
+
+
+## Acknowledgement
+### MuJoCo Assets
+```bash
+├── franka_emika_panda
+│   ├── assets
+│   │   ├── finger_0.obj
+│   │   ├── ...
+│   └── panda_push.xml
+│   └── scene_push.xml
+```
+The robot arm model used is from Google Deepmind's [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) repository. Specifically, we use the [Franka Emika Panda](https://github.com/google-deepmind/mujoco_menagerie/tree/main/franka_emika_panda) model which is a 7-axis robot arm.
+- `panda_push.xml` MJCF description file is modified from their `panda_nohand.xml` MJCF description file to include a rounded rod-shaped end effector for the block pushing task.
+- `scene_push.xml` MCJF description file is heavily modified from their `scene_xml`MCJF description file to include objects in our custom MuJoCo simulation environment like a table, a coloured block, two cameras for image input and 3 coloured target regions.
+- `assets` directory includes all assets from the repository for the Franka Emika Panda robot arm. 
+
+### Neural Networks
+```bash
+├── model
+│   ├── common
+│   │   ├── cnn.py
+│   │   └── mlp.py
+│   └── push_actor.py
+│   └── push_critic.py
+```
+Most of the neural network has been written from scratch with the exception of `mlp.py` which is based on the implementation of MLP and residual style MLP networks from the [D3IL](https://github.com/ALRhub/d3il/blob/main/agents/models/common/mlp.py) and [DPPO](https://github.com/irom-princeton/dppo/blob/main/model/common/mlp.py) repositories. While MLP are easy to code, these clean and modular implementation help keep the code in `push_actor.py` and `push_critic.py` clean and readable.
+
+### Inverse Kinematics
+The implementation of inverse kinematics for the MuJoCo simulator in `inverse_kinematics.py` is taken from Google Deepmind's [dm_control](https://github.com/google-deepmind/dm_control) repository which is meant for Reinforcement Learning in physics-based simulation like MuJoCo.
+
+### PPO
+The implementation of PPO in `PPO.py` is heavily modified version from Eric Yu's [PPO for Beginners](https://github.com/ericyangyu/PPO-for-Beginners) repository. Some of the modifications of our PPO implementation is with reference to the [DPPO](https://github.com/irom-princeton/dppo) repository.
+
+### Gymnasium Environment
+The `gymnasium` environment for the block pushing task in `push_custom.py` is written from scratch with reference the to [`gymnasium` documentation](https://gymnasium.farama.org/).
