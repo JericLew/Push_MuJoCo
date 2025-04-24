@@ -11,7 +11,7 @@ from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 if __name__ == "__main__":
     ## Environment Hyperparameters
     action_type = "delta_xy" # delta_xy, delta_angle, absolute_angle
-    privileged = False # Train with privileged information?
+    privileged = True # Train with privileged information?
     random_object_pos = True # Randomize object position?
     max_episode_steps = 300
     n_envs = 30
@@ -26,7 +26,7 @@ if __name__ == "__main__":
         save_model_interval = 50
         save_image_interval = 50
         batch_size = 300
-        grad_accumulation_steps = 1
+        grad_accumulation_steps = 10
         n_updates_per_iteration = 10
         gamma = 0.999
         gae_lambda = 0.95
@@ -42,8 +42,8 @@ if __name__ == "__main__":
         name = "imitation-delta_xy-random"
         save_model_interval = 50
         save_image_interval = 50
-        batch_size = 150
-        grad_accumulation_steps = 3
+        batch_size = 200
+        grad_accumulation_steps = 15
         n_updates_per_iteration = 10
         gamma = 0.999
         gae_lambda = 0.95

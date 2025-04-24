@@ -49,7 +49,7 @@ class PPOAgent():
                              gamma=0.999,
                              gae_lambda=0.95,
                              vf_coef=0.5,
-                             bc_loss_coeff=0.05,
+                             bc_loss_coef=0.05,
                              entropy_coef=1e-2,
                              entropy_coef_decay=0.99,
                              clip=0.2,
@@ -68,7 +68,7 @@ class PPOAgent():
         self.gamma = gamma                                          # Discount Factor
         self.gae_lambda = gae_lambda                                # GAE Lambda
         self.vf_coef = vf_coef                                      # Value Function Coefficient
-        self.bc_loss_coeff = bc_loss_coeff                          # Behavior Cloning Loss Coefficient
+        self.bc_loss_coef = bc_loss_coef                          # Behavior Cloning Loss Coefficient
         self.entropy_coef = entropy_coef                            # Entropy Coefficient
         self.entropy_coef_decay = entropy_coef_decay                # Entropy Coefficient Decay
         self.clip = clip                                            # PPO clip parameter (recommended by paper)
@@ -95,7 +95,7 @@ class PPOAgent():
                     "gamma": self.gamma,
                     "gae_lambda": self.gae_lambda,
                     "vf_coef": self.vf_coef,
-                    "bc_loss_coeff": self.bc_loss_coeff,
+                    "bc_loss_coef": self.bc_loss_coef,
                     "entropy_coef": self.entropy_coef,
                     "entropy_coef_decay": self.entropy_coef_decay,
                     "clip": self.clip,
@@ -185,11 +185,11 @@ class PPOAgent():
                     ## Loss Function
                     actor_loss = (-torch.min(surr1, surr2)).mean()
                     critic_loss = torch.nn.MSELoss()(batch_values_new, batch_returns)
-                    total_loss = actor_loss + self.vf_coef * critic_loss - self.entropy_coef * entropy.mean() + self.bc_loss_coeff * bc_loss
+                    total_loss = actor_loss + self.vf_coef * critic_loss - self.entropy_coef * entropy.mean() + self.bc_loss_coef * bc_loss
 
                     ## Logging
                     with torch.no_grad():
-                        average_bc_loss += bc_loss.item()
+                        average_bc_loss += bc_loss.item() if self.expert_actor is not None else 0
                         average_actor_loss += actor_loss.item()
                         average_critic_loss += critic_loss.item()
                         average_entropy += entropy.mean().item()

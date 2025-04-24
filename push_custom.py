@@ -271,62 +271,32 @@ class PickPlaceCustomEnv(gym.Env):
         '''
         reward = 0
 
-        object_x, object_y, object_z = self.current_object_pos
-        ee_x, ee_y, ee_z = self.data.site_xpos[self.end_effector_id]
-        attachment_x, attachment_y, attachment_z = self.data.site_xpos[self.attachment_site_id]
+        ee_pos = self.data.site_xpos[self.end_effector_id].copy()
 
-        # z height penalty for ee to be within 0.25 +/- 0.025 (object center height)
-        if not self.action_type != "delta_xy": # delta_xy fixes z height
-            if ee_z > 0.255:
-                reward -= 0.04 * abs(ee_z - 0.25)
-            elif ee_z < 0.245:
-                reward -= 0.06 * abs(ee_z - 0.25)
-
-        # # upright penalty for ee, angle always positive 0 to 180 deg
-        # # if 90 degree,  0.005 * 90/180 = 0.005 (-0.75)
-        # z_distance = attachment_z - ee_z # should be positive if ee is below, if z_distance < 0, then ee is above
-        # length = np.linalg.norm((object_x - attachment_x, object_y - attachment_y, object_z - attachment_z)) # NOTE fixed length of 0.1
-        # z_over_length = np.clip(z_distance / length, -1, 1) # clip to -1 to 1
-        # angle = np.arccos(z_over_length)
-        # if angle > (np.pi / 9): # if angle > 20 degrees
-        #     reward -= 0.005 * angle / np.pi
-
-        ## distance penalty for ee_x, ee_y to be close to object_x, object_y
-        distance = np.linalg.norm((object_x - ee_x, object_y - ee_y))
-        if distance > 0.10: # NOTE 0.0707 corner of object + 0.01 radius of ee
-            reward -= 0.02 * distance
-
-        ## push distance reward
-        # normalized distance to be / initial distance and scale by x2
-        current_distace = np.linalg.norm(self.current_object_pos[:2] - self.target_pos[:2])
-        prev_distance = np.linalg.norm(self.prev_object_pos[:2] - self.target_pos[:2])
+        ## Object Distance Penalty
+        object_distance = np.linalg.norm(self.current_object_pos[:2] - self.target_pos[:2])
         initial_distance = np.linalg.norm(self.initial_object_pos[:2] - self.target_pos[:2])
-        # reward += 2 * (prev_distance - current_distace)
-        reward += 2 * (prev_distance - current_distace) / initial_distance
-        if self.success:
-            print(f"WE DID IT! {self.current_object_pos} -> {self.target_pos}")
-            reward += 1.5
-
-        ## Living penalty
-        # max penalty = 0.004 * 300 = -1.2
-        reward -= 0.004
+        reward -= 0.005 * (object_distance / initial_distance)
 
         ## Terimination rewards
+        if self.success:
+            reward += 5
+            print(f"WE DID IT! Object: {self.current_object_pos}, EE: {ee_pos} -> {self.target_pos}")
         if self.out_of_bounds:
-            reward -= 3
-            print(f"Out of bounds! Object: {self.current_object_pos}, EE: {ee_x, ee_y, ee_z} -> {self.target_pos}")
+            reward -= 5
+            print(f"Out of bounds! Object: {self.current_object_pos}, EE: {ee_pos} -> {self.target_pos}")
         if self.too_far:
-            reward -= 3
-            print(f"Too far! Object: {self.current_object_pos}, EE: {ee_x, ee_y, ee_z} -> {self.target_pos}")
+            reward -= 5
+            print(f"Too far! Object: {self.current_object_pos}, EE: {ee_pos} -> {self.target_pos}")
         if self.wrong_target:
             reward -= 1.5
-            print(f"Wrong target! Object: {self.current_object_pos}, EE: {ee_x, ee_y, ee_z} -> {self.target_pos}")
+            print(f"Wrong target! Object: {self.current_object_pos}, EE: {ee_pos} -> {self.target_pos}")
         return reward
     
     def _check_success(self):
-        in_target = np.linalg.norm(self.current_object_pos[:2] - self.target_pos[:2]) < 0.05 # NOTE 0.05 is 0.5 width of object
+        in_target = np.linalg.norm(self.current_object_pos[:2] - self.target_pos[:2]) < 0.10
         still = np.linalg.norm(self.current_object_vel) < 0.01 # NOTE arbitrary speed threshold
-        return in_target and still
+        return in_target # and still
     
     def _check_out_of_bounds(self):
         x, y, z = self.current_object_pos
@@ -346,9 +316,9 @@ class PickPlaceCustomEnv(gym.Env):
             if color_target_pos[0] == self.target_pos[0] and color_target_pos[1] == self.target_pos[1]:
                 continue # if correct target, skip
             else:
-                in_wrong_target = np.linalg.norm(self.current_object_pos[:2] - color_target_pos[:2]) < 0.05
+                in_wrong_target = np.linalg.norm(self.current_object_pos[:2] - color_target_pos[:2]) < 0.10
                 still = np.linalg.norm(self.current_object_vel) < 0.01 # NOTE arbitrary speed threshold
-                if in_wrong_target and still:
+                if in_wrong_target: # and still:
                     return True
         return False
 
