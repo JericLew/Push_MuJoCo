@@ -5,6 +5,15 @@ Hi! This is our group's work for the graduate level course [ME5406 Deep Learning
 
 We are using the deep reinforcement learning algorithm PPO to learn behaviours for our specified block pushing task with a 7 DoF Franka Emika Panda robot arm.
 
+-   [`train.py`](train.py): Entry point for training script. Contains hyperparameters and setup for training.
+-   [`eval.py`](eval.py): Entry point for evalutaion script. Contains hyperparameters and setup for evaluation.
+-   [`PPO.py`](PPO.py): Contains our implementation of the PPO algorithm with GAE and behaviour cloning loss.
+-   [`push_custom.py`](push_custom.py): Contains our custom `gymnasium` learning environment with MuJoCo python pindings for simulation.
+-   [`inverse_kinematics.py`](inverse_kinematics.py): Google Deepmind's [dm_control](https://github.com/google-deepmind/dm_control) inverse kinematics implementation for MuJoCo.
+-   [`model`](model): Directory containing our neural network implementation for actor and critic
+-   [`franka_emika_panda`](franka_emika_panda): Directory containing assets and MJCF description files for MuJoCo simulation.
+-   [`saved_pth`](saved_pth): Directory containing saved weights for our neural networks.
+
 ## Setup
 Setup the `conda` environment for our repository by running
 ```
