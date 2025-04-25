@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 import numpy as np
 
@@ -10,7 +11,7 @@ from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 
 
 ## Eval Hyperparameters
-eval_runs = 100
+eval_runs = 10
 
 ## Environment Hyperparameters
 action_type = "delta_xy" # delta_xy, delta_angle, absolute_angle
@@ -126,6 +127,7 @@ for run in range(eval_runs):
     obs, info = env.reset()
 
     for step in range(max_episode_steps):
+        start_time = time.time()
         obs = {key: torch.from_numpy(obs[key]).to("cuda").float().unsqueeze(0) for key in obs.keys()}
         obs["image"] = obs["image"].permute(0, 1, 4, 2, 3)  # Change from (B, N, H, W, C) to (B, N, C, H, W)
         with torch.no_grad():
@@ -143,6 +145,8 @@ for run in range(eval_runs):
         episode_reward += reward
 
         env.render()
+        elasped_time = time.time() - start_time
+        time.sleep(max(0, 1/env.metadata["render_fps"] - elasped_time))
 
         if terminated or truncated:
             print(f"Episode finished after {step + 1} steps with reward: {episode_reward}")

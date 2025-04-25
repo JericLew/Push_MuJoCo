@@ -11,7 +11,14 @@ Setup the `conda` environment for our repository by running
 conda env create -f environment.yml
 conda activate push_mujoco
 ```
-NOTE: MuJoCo Python require at least one of the three OpenGL rendering backends: EGL (headless, hardware-accelerated), GLFW (windowed, hardware-accelerated), and OSMesa (purely software-based). Refer to Google Deepmind's [dm_control](https://github.com/google-deepmind/dm_control) repository for further instructions.
+
+Alternatively, you could set up the environment with `requirements.txt`
+```
+conda create -n push_mujoco python=3.9
+conda activate push_mujoco
+pip install -r requirements.txt
+```
+NOTE: MuJoCo Python require at least one of the three OpenGL rendering backends: EGL (headless, hardware-accelerated), GLFW (windowed, hardware-accelerated), and OSMesa (purely software-based). Refer to Google Deepmind's [dm_control](https://github.com/google-deepmind/dm_control?tab=readme-ov-file#rendering) repository for further instructions. Typically, try `export MUJOCO_GL=egl` if you are facing OpenGL rendering related errors.
 
 ## Usage
 To train from scratch:
@@ -65,8 +72,8 @@ The implementation of PPO in `PPO.py` is heavily modified version from Eric Yu's
 The `gymnasium` environment for the block pushing task in `push_custom.py` is written from scratch with reference the to [`gymnasium` documentation](https://gymnasium.farama.org/).
 
 ## Package Versions
--   mujoco=3.3.0
--   gymnasium=1.1.1
--   torch=2.6.0
--   torchvision=0.21.0
--   wandb=0.19.9
+-   mujoco==3.3.0
+-   gymnasium==1.1.1
+-   torch==2.6.0
+-   torchvision==0.21.0
+-   wandb==0.19.9
