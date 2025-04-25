@@ -69,7 +69,7 @@ The implementation of inverse kinematics for the MuJoCo simulator in `inverse_ki
 The implementation of PPO in `PPO.py` is heavily modified version from Eric Yu's [PPO for Beginners](https://github.com/ericyangyu/PPO-for-Beginners) repository. Some of the modifications of our PPO implementation is with reference to the [DPPO](https://github.com/irom-princeton/dppo) repository.
 
 ### Gymnasium Environment
-The `gymnasium` environment for the block pushing task in `push_custom.py` is written from scratch with reference the to [`gymnasium` documentation](https://gymnasium.farama.org/).
+The `gymnasium` environment for the block pushing task in `push_custom.py` is written from scratch with reference the to `gymnasium` [documentation](https://gymnasium.farama.org/).
 
 ## Package Versions
 -   mujoco==3.3.0
