@@ -30,9 +30,9 @@ class PickPlaceCustomEnv(gym.Env):
 
     The environment supports both privileged and non-privileged action spaces.
     Privileged action spaec: delta x, delta y (NOTE z is fixed to object height)
-    Non-privileged action space: delta joint angles
+    Non-privileged action space: delta x, delta y
     """
-    metadata = {"render_modes": ["human"], "action_types": ["delta_xy", "delta_angle", "absolute_angle"]}
+    metadata = {"render_modes": ["human"], "render_fps": 20, "action_types": ["delta_xy", "delta_angle", "absolute_angle"]}
 
     def __init__(self, xml_path, action_type="delta_xy", privileged=False, random_object_pos=False, render_mode="human"):
         super().__init__()

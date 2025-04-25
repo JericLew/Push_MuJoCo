@@ -23,8 +23,8 @@ if __name__ == "__main__":
     if privileged: # Privileged PPO Hyperparameters
         use_wandb = True
         name = "privileged-delta_xy-random"
-        save_model_interval = 50
-        save_image_interval = 50
+        save_model_interval = 25
+        save_image_interval = 25
         batch_size = 300
         grad_accumulation_steps = 10
         n_updates_per_iteration = 10
@@ -40,17 +40,19 @@ if __name__ == "__main__":
     else: # Non-Privileged PPO Hyperparameters
         use_wandb = True
         name = "imitation-delta_xy-random"
-        save_model_interval = 50
-        save_image_interval = 50
+        save_model_interval = 25
+        save_image_interval = 25
         batch_size = 200
         grad_accumulation_steps = 15
         n_updates_per_iteration = 10
         gamma = 0.999
         gae_lambda = 0.95
         vf_coef = 0.01
-        bc_loss_coef = 0.005
-        entropy_coef = 1e-6
-        entropy_coef_decay = 0.95
+        bc_loss_coef = 1e-1
+        bc_loss_coef_min = 1e-2
+        bc_loss_coef_decay = 0.99
+        entropy_coef = 1e-4
+        entropy_coef_decay = 0.99
         clip = 0.2
         actor_lr = 3e-4
         critic_lr = 5e-4
@@ -204,6 +206,8 @@ if __name__ == "__main__":
                                     gae_lambda=gae_lambda,
                                     vf_coef=vf_coef,
                                     bc_loss_coef=bc_loss_coef,
+                                    bc_loss_coef_min=bc_loss_coef_min,
+                                    bc_loss_coef_decay=bc_loss_coef_decay,
                                     entropy_coef=entropy_coef,
                                     entropy_coef_decay=entropy_coef_decay,
                                     clip=clip,

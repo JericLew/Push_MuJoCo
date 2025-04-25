@@ -49,7 +49,9 @@ class PPOAgent():
                              gamma=0.999,
                              gae_lambda=0.95,
                              vf_coef=0.5,
-                             bc_loss_coef=0.05,
+                             bc_loss_coef=5e-3,
+                             bc_loss_coef_min=1e-5,
+                             bc_loss_coef_decay=0.95,
                              entropy_coef=1e-2,
                              entropy_coef_decay=0.99,
                              clip=0.2,
@@ -69,6 +71,8 @@ class PPOAgent():
         self.gae_lambda = gae_lambda                                # GAE Lambda
         self.vf_coef = vf_coef                                      # Value Function Coefficient
         self.bc_loss_coef = bc_loss_coef                            # Behavior Cloning Loss Coefficient
+        self.bc_loss_coef_min = bc_loss_coef_min                    # Minimum Behavior Cloning Loss Coefficient
+        self.bc_loss_coef_decay = bc_loss_coef_decay                # Behavior Cloning Loss Coefficient Decay
         self.entropy_coef = entropy_coef                            # Entropy Coefficient
         self.entropy_coef_decay = entropy_coef_decay                # Entropy Coefficient Decay
         self.clip = clip                                            # PPO clip parameter (recommended by paper)
@@ -96,6 +100,8 @@ class PPOAgent():
                     "gae_lambda": self.gae_lambda,
                     "vf_coef": self.vf_coef,
                     "bc_loss_coef": self.bc_loss_coef,
+                    "bc_loss_coef_min": self.bc_loss_coef_min,
+                    "bc_loss_coef_decay": self.bc_loss_coef_decay,
                     "entropy_coef": self.entropy_coef,
                     "entropy_coef_decay": self.entropy_coef_decay,
                     "clip": self.clip,
@@ -232,7 +238,7 @@ class PPOAgent():
             print(f"Average Ratio: {average_ratio:.7f}, Average Clipfrac: {average_clipfrac:.7f}, Average KL: {average_kl:.7f}, Explained Variance: {explained_variance:.7f}")
 
             ## Logging Decaying Terms
-            print(f"Entropy Coefficient: {self.entropy_coef}")
+            print(f"Entropy Coefficient: {self.entropy_coef}, BC Loss Coefficient: {self.bc_loss_coef:.7f}")
 
             ## Log to wandb
             if self.use_wandb:
@@ -251,6 +257,7 @@ class PPOAgent():
                     "avg_best_reward": avg_best_reward,
                     "success_rate": success_rate,
                     "num_episode_finished": num_episode_finished,
+                    "bc_loss_coef": self.bc_loss_coef,
                     "entropy_coef": self.entropy_coef,
                     },
                     step=itr,
@@ -259,6 +266,7 @@ class PPOAgent():
 
             ## Decay Terms
             self.entropy_coef *= self.entropy_coef_decay
+            self.bc_loss_coef = max(self.bc_loss_coef * self.bc_loss_coef_decay, self.bc_loss_coef_min)
 
             ## Log training time
             end_time = time.time()

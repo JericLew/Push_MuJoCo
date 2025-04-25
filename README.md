@@ -27,7 +27,6 @@ python eval.py
 Hyperparameters in both [`train.py`](train.py) and [`eval.py](eval.py) can be changed. Some important hyperparameters include:
 -   `privileged` is a boolean flag to determine whether to train/evaluate the privileged actor or vision actor.
 -   `random_object_pos` boolean flag to determine whether the object position is randomised in the simulation environmnet
--   
 
 
 ## Acknowledgement
@@ -64,3 +63,10 @@ The implementation of PPO in `PPO.py` is heavily modified version from Eric Yu's
 
 ### Gymnasium Environment
 The `gymnasium` environment for the block pushing task in `push_custom.py` is written from scratch with reference the to [`gymnasium` documentation](https://gymnasium.farama.org/).
+
+## Package Versions
+-   mujoco=3.3.0
+-   gymnasium=1.1.1
+-   torch=2.6.0
+-   torchvision=0.21.0
+-   wandb=0.19.9
