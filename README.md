@@ -24,7 +24,7 @@ To test model:
 python eval.py
 ```
 
-Hyperparameters in both [`train.py`](train.py) and [`eval.py](eval.py) can be changed. Some important hyperparameters include:
+Hyperparameters in both [`train.py`](train.py) and [`eval.py`](eval.py) can be changed. Some important hyperparameters include:
 -   `privileged` is a boolean flag to determine whether to train/evaluate the privileged actor or vision actor.
 -   `random_object_pos` boolean flag to determine whether the object position is randomised in the simulation environmnet
 

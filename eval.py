@@ -10,7 +10,7 @@ from model.push_critic import PushNNCritic, PushNNPrivilegedCritic
 
 
 ## Eval Hyperparameters
-eval_runs = 50
+eval_runs = 100
 
 ## Environment Hyperparameters
 action_type = "delta_xy" # delta_xy, delta_angle, absolute_angle
