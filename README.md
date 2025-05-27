@@ -3,6 +3,8 @@
 ## Overview
 Hi! This is our group's work for the graduate level course [ME5406 Deep Learning for Robotics](https://nusmods.com/courses/ME5406/deep-learning-for-robotics) @ National University of Singapore (NUS).
 
+[![Watch the video](https://raw.githubusercontent.com/JericLew/Push_MuJoCo/main/mujoco_env.png)](https://drive.google.com/file/d/1vmEVcVk4UAusThqe8NbUYnQM-RlgJ4XU/view?usp=drive_link)
+
 We are using the deep reinforcement learning algorithm PPO to learn behaviours for our specified block pushing task with a 7 DoF Franka Emika Panda robot arm.
 
 -   [`train.py`](train.py): Entry point for training script. Contains hyperparameters and setup for training.
